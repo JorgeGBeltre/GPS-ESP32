@@ -29,18 +29,26 @@ void TinyGpsPlusProvider::update() {
 }
 
 void TinyGpsPlusProvider::readData(domain::GpsLocation& out) {
+    out.satellites = gps_.satellites.isValid() ? static_cast<int>(gps_.satellites.value()) : 0;
     out.isValid = gps_.location.isValid();
     if (out.isValid) {
         out.latitude = gps_.location.lat();
         out.longitude = gps_.location.lng();
-        out.altitude = gps_.altitude.meters();
-        out.speed = gps_.speed.kmph();
-        out.course = gps_.course.deg();
-        out.satellites = gps_.satellites.value();
+        out.altitude = gps_.altitude.isValid() ? static_cast<float>(gps_.altitude.meters()) : 0.0f;
+        out.speed = gps_.speed.isValid() ? static_cast<float>(gps_.speed.kmph()) : 0.0f;
+        out.course = gps_.course.isValid() ? static_cast<float>(gps_.course.deg()) : 0.0f;
     } else {
+        out.latitude = 0.0;
+        out.longitude = 0.0;
+        out.altitude = 0.0f;
+        out.speed = 0.0f;
+        out.course = 0.0f;
         static unsigned long lastWarning = 0;
         if (millis() - lastWarning > 30000) {
-            Serial.printf("[GPS] Sin fix valido - Satelites visibles: %d\n", gps_.satellites.value());
+            Serial.printf("[GPS] Sin fix valido - Satelites visibles: %d (Chars: %u, ChkErr: %u)\n",
+                          out.satellites,
+                          (unsigned int)gps_.charsProcessed(),
+                          (unsigned int)gps_.failedChecksum());
             lastWarning = millis();
         }
     }
@@ -51,7 +59,7 @@ float TinyGpsPlusProvider::currentSpeedKmph() {
 }
 
 int TinyGpsPlusProvider::getSatellites() {
-    return gps_.satellites.value();
+    return gps_.satellites.isValid() ? static_cast<int>(gps_.satellites.value()) : 0;
 }
 
 bool TinyGpsPlusProvider::hasFix() {

@@ -14,8 +14,7 @@
 
 #include "Infrastructure/Actuators/GpioRelay.h"
 #include "Infrastructure/Button/GpioButton.h"
-#include "Infrastructure/Gps/TinyGpsPlusProvider.h"
-#include "Infrastructure/Gsm/Sim7000AlertSender.h"
+#include "Infrastructure/Modem/Sim7000Modem.h"
 #include "Infrastructure/Indicator/GpioIndicator.h"
 #include "Infrastructure/Logging/SerialLogger.h"
 #include "Infrastructure/Messaging/Mqttv5Transport.h"
@@ -47,9 +46,6 @@ static infra::ArduinoJsonPayloadSerializer g_serializer;
 static infra::NvsConfigRepository          g_configRepo;
 static infra::BleProvisioningPortal        g_blePortal;
 
-// Hardware GPS (Serial2 on ESP32: RX2=GPIO 16, TX2=GPIO 17)
-static infra::TinyGpsPlusProvider          g_gpsProvider{Serial2, GPS_RX_PIN, GPS_TX_PIN, 9600};
-
 // Hardware MPU6050 (Wire on ESP32: SDA=GPIO 21, SCL=GPIO 22)
 static infra::Mpu6050Detector              g_accidentDetector{
     I2C_SDA_PIN, I2C_SCL_PIN,
@@ -57,9 +53,9 @@ static infra::Mpu6050Detector              g_accidentDetector{
     HARSH_ACCEL_THRESHOLD_G, HARSH_BRAKE_THRESHOLD_G,
     ACCIDENT_CHECK_INTERVAL, ACCIDENT_COOLDOWN};
 
-// Optional Cellular Modem Alert Sender (Serial1 on ESP32: RX=GPIO 26, TX=GPIO 27)
-static infra::Sim7000AlertSender           g_gsmSender{
-    Serial1, GSM_RX_PIN, GSM_TX_PIN, 115200, EMERGENCY_PHONE};
+// SIM7000G Integrated LTE & GNSS Modem (Serial2: RX=GPIO 16, TX=GPIO 17, 115200 baud)
+static infra::Sim7000Modem                 g_sim7000{
+    Serial2, SIM7000_RX_PIN, SIM7000_TX_PIN, SIM7000_BAUD, EMERGENCY_PHONE};
 
 static app::RelayService*            g_relayService = nullptr;
 static app::ConnectivityService*     g_connectivity = nullptr;
@@ -120,11 +116,10 @@ void setup() {
 
     // Initialize sensors and communication hardware
     g_accidentDetector.begin();
-    g_gpsProvider.begin();
+    g_sim7000.begin();
 
     if (SMS_ALERTS_ENABLED) {
-        g_gsmSender.begin(activeDeviceId);
-        g_gsmSender.setCaCert(root_ca_pem);
+        g_sim7000.setCaCert(root_ca_pem);
     }
 
     g_wifi.setCredentials(devConfig.wifiSsid, devConfig.wifiPass);
@@ -160,13 +155,13 @@ void setup() {
 
     static app::TelemetryService telemetry{
         relayService, connectivity, g_deviceRepo, g_timeProvider,
-        g_clock, g_serializer, topics, g_logger, &g_gpsProvider};
+        g_clock, g_serializer, topics, g_logger, &g_sim7000};
     g_telemetry = &telemetry;
 
     static app::AccidentService accidentService{
-        g_accidentDetector, g_gpsProvider, connectivity,
+        g_accidentDetector, g_sim7000, connectivity,
         g_deviceRepo, g_timeProvider, g_serializer,
-        topics, g_logger, &g_gsmSender};
+        topics, g_logger, &g_sim7000};
     g_accidentService = &accidentService;
 
     auto provisioningCallback = []() {
@@ -186,7 +181,7 @@ void setup() {
     static app::RelayFirmwareController controller{
         relayService, connectivity, telemetry, g_ota, g_indicator,
         g_system, g_timeProvider, g_clock, g_logger, topics,
-        provisioningCallback, &accidentService, &g_gpsProvider};
+        provisioningCallback, &accidentService, &g_sim7000};
 
     controller.registerButton(g_button1, deviceId1);
 
@@ -200,6 +195,6 @@ void loop() {
     if (g_controller) {
         g_controller->tick();
     }
-    g_gsmSender.update();
+    g_sim7000.update();
     delay(10);
 }

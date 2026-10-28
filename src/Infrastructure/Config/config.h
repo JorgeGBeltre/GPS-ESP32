@@ -37,13 +37,12 @@ constexpr uint8_t wifiLed = 2;
 constexpr uint8_t DEBOUNCE_TIME = 50;
 constexpr uint16_t BUTTON_LONG_PRESS_TIME = 3000;
 
-// GPS & MPU6050 Hardware Pins
-constexpr uint8_t GPS_RX_PIN = 16;
-constexpr uint8_t GPS_TX_PIN = 17;
-constexpr uint8_t I2C_SDA_PIN = 21;
-constexpr uint8_t I2C_SCL_PIN = 22;
-constexpr uint8_t GSM_RX_PIN = 26;
-constexpr uint8_t GSM_TX_PIN = 27;
+// SIM7000G (LTE & GNSS) & MPU6050 Hardware Pins
+constexpr uint8_t SIM7000_RX_PIN = 16;
+constexpr uint8_t SIM7000_TX_PIN = 17;
+constexpr uint32_t SIM7000_BAUD  = 115200;
+constexpr uint8_t I2C_SDA_PIN    = 21;
+constexpr uint8_t I2C_SCL_PIN    = 22;
 
 // Motion & Accident Detection Thresholds
 constexpr int ACCIDENT_SENSITIVITY = 2000;
