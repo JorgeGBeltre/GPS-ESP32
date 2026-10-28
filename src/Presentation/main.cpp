@@ -129,9 +129,22 @@ void setup() {
 
     g_wifi.setCredentials(devConfig.wifiSsid, devConfig.wifiPass);
 
-    const char* broker = !devConfig.mqttBroker.empty() ? devConfig.mqttBroker.c_str() : MQTT_SERVER;
-    int port = devConfig.mqttPort > 0 ? devConfig.mqttPort : MQTT_PORT;
-    const char* apiKey = !devConfig.mqttUser.empty() ? devConfig.mqttUser.c_str() : API_KEY;
+    bool brokerIsPlaceholder = devConfig.mqttBroker.empty() || 
+                               devConfig.mqttBroker == "YOUR_MQTT_SERVER_HERE" || 
+                               devConfig.mqttBroker == "localhost";
+    const char* broker = !brokerIsPlaceholder ? devConfig.mqttBroker.c_str() : MQTT_SERVER;
+    int port = (!brokerIsPlaceholder && devConfig.mqttPort > 0 && devConfig.mqttPort != 8883) ? devConfig.mqttPort : MQTT_PORT;
+
+    bool userIsPlaceholder = devConfig.mqttUser.empty() || 
+                             devConfig.mqttUser == "YOUR_API_KEY_HERE";
+    const char* apiKey = !userIsPlaceholder ? devConfig.mqttUser.c_str() : API_KEY;
+
+    if (brokerIsPlaceholder || userIsPlaceholder) {
+        devConfig.mqttBroker = MQTT_SERVER;
+        devConfig.mqttPort = MQTT_PORT;
+        devConfig.mqttUser = API_KEY;
+        g_configRepo.save(devConfig);
+    }
 
     app::MqttTopics topics = app::MqttTopics::forDevice(activeDeviceId);
 

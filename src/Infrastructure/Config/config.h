@@ -19,9 +19,9 @@ constexpr const char *ntpServer2 = "time.nist.gov";
 constexpr long gmtOffset_sec = -4 * 3600;
 constexpr int daylightOffset_sec = 0;
 
-constexpr const char *MQTT_SERVER = "YOUR_MQTT_SERVER_HERE";
-constexpr int MQTT_PORT = 8883;
-constexpr const char *API_KEY = "YOUR_API_KEY_HERE";
+constexpr const char *MQTT_SERVER = "192.168.100.7";
+constexpr int MQTT_PORT = 1883;
+constexpr const char *API_KEY = "dvk_8e64c24388e36214db296ef144f866c1f1ec75571658b736b755743a1936c646";
 constexpr unsigned long MQTT_RECONNECT_INTERVAL = 10000;
 constexpr int MQTT_SOCKET_TIMEOUT = 30;
 constexpr size_t MQTT_BUFFER_SIZE = 4096;
