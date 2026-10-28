@@ -16,8 +16,14 @@ public:
     Sim7000Modem(HardwareSerial& serial = Serial2,
                  uint8_t rxPin = 16,
                  uint8_t txPin = 17,
+                 uint8_t pwrKeyPin = 23,
                  uint32_t baud = 115200,
                  const std::string& emergencyPhone = "+18090000000");
+
+    // Electronic Power Control (PWRKEY)
+    void powerOn();
+    void powerOff();
+    void restartModem();
 
     // IGpsProvider overrides
     void begin() override;
@@ -49,6 +55,7 @@ private:
     HardwareSerial& serial_;
     uint8_t         rxPin_;
     uint8_t         txPin_;
+    uint8_t         pwrKeyPin_;
     uint32_t        baud_;
     std::string     emergencyPhone_;
 

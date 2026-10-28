@@ -53,9 +53,9 @@ static infra::Mpu6050Detector              g_accidentDetector{
     HARSH_ACCEL_THRESHOLD_G, HARSH_BRAKE_THRESHOLD_G,
     ACCIDENT_CHECK_INTERVAL, ACCIDENT_COOLDOWN};
 
-// SIM7000G Integrated LTE & GNSS Modem (Serial2: RX=GPIO 16, TX=GPIO 17, 115200 baud)
+// SIM7000G Integrated LTE & GNSS Modem (Serial2: RX=GPIO 16, TX=GPIO 17, PWRKEY=GPIO 23, 115200 baud)
 static infra::Sim7000Modem                 g_sim7000{
-    Serial2, SIM7000_RX_PIN, SIM7000_TX_PIN, SIM7000_BAUD, EMERGENCY_PHONE};
+    Serial2, SIM7000_RX_PIN, SIM7000_TX_PIN, SIM7000_PWRKEY_PIN, SIM7000_BAUD, EMERGENCY_PHONE};
 
 static app::RelayService*            g_relayService = nullptr;
 static app::ConnectivityService*     g_connectivity = nullptr;
@@ -196,5 +196,20 @@ void loop() {
         g_controller->tick();
     }
     g_sim7000.update();
+
+    if (Serial.available()) {
+        String cmd = Serial.readStringUntil('\n');
+        cmd.trim();
+        if (cmd == "diag" || cmd == "gps") {
+            g_sim7000.diagnose();
+        } else if (cmd == "pwr_on") {
+            g_sim7000.powerOn();
+        } else if (cmd == "pwr_off") {
+            g_sim7000.powerOff();
+        } else if (cmd == "restart_modem") {
+            g_sim7000.restartModem();
+        }
+    }
+
     delay(10);
 }

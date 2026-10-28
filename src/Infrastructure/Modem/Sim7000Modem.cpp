@@ -5,19 +5,64 @@ namespace relay::infra {
 Sim7000Modem::Sim7000Modem(HardwareSerial& serial,
                            uint8_t rxPin,
                            uint8_t txPin,
+                           uint8_t pwrKeyPin,
                            uint32_t baud,
                            const std::string& emergencyPhone)
     : serial_(serial),
       rxPin_(rxPin),
       txPin_(txPin),
+      pwrKeyPin_(pwrKeyPin),
       baud_(baud),
       emergencyPhone_(emergencyPhone) {}
 
+void Sim7000Modem::powerOn() {
+    if (pwrKeyPin_ == 0xFF) return;
+
+    Serial.printf("[SIM7000] Control PWRKEY en GPIO %u. Verificando estado...\n", pwrKeyPin_);
+    pinMode(pwrKeyPin_, OUTPUT);
+    digitalWrite(pwrKeyPin_, HIGH);
+    delay(100);
+
+    // Si ya responde a AT, no pulsar PWRKEY para evitar apagarlo accidentalmente
+    if (sendATCommand("AT", "OK", 400)) {
+        Serial.println("[SIM7000] El modem ya se encuentra encendido.");
+        return;
+    }
+
+    Serial.println("[SIM7000] Encendiendo modem: pulsando PWRKEY (LOW por 1.2s)...");
+    digitalWrite(pwrKeyPin_, LOW);
+    delay(1200);
+    digitalWrite(pwrKeyPin_, HIGH);
+    Serial.println("[SIM7000] Esperando arranque del modulo (3.5s)...");
+    delay(3500);
+}
+
+void Sim7000Modem::powerOff() {
+    if (pwrKeyPin_ == 0xFF) return;
+    Serial.printf("[SIM7000] Apagando modem via PWRKEY (GPIO %u)...\n", pwrKeyPin_);
+    pinMode(pwrKeyPin_, OUTPUT);
+    digitalWrite(pwrKeyPin_, LOW);
+    delay(1500);
+    digitalWrite(pwrKeyPin_, HIGH);
+    isReady_ = false;
+    gnssPowered_ = false;
+}
+
+void Sim7000Modem::restartModem() {
+    powerOff();
+    delay(1000);
+    powerOn();
+}
+
 void Sim7000Modem::begin() {
-    Serial.printf("[SIM7000] Inicializando modem SIM7000G en UART (RX: %u, TX: %u, Baud: %u)...\n",
-                  rxPin_, txPin_, baud_);
+    Serial.printf("[SIM7000] Inicializando modem SIM7000G en UART (RX: %u, TX: %u, PWRKEY: %u, Baud: %u)...\n",
+                  rxPin_, txPin_, pwrKeyPin_, baud_);
     serial_.begin(baud_, SERIAL_8N1, rxPin_, txPin_);
-    delay(300);
+    delay(200);
+
+    if (pwrKeyPin_ != 0xFF) {
+        powerOn();
+    }
 
     // Intentar comunicar a la velocidad configurada (115200)
     bool detected = false;
@@ -226,6 +271,7 @@ bool Sim7000Modem::hasFix() {
 
 void Sim7000Modem::diagnose() {
     Serial.println("\n=== DIAGNOSTICO MODEM SIM7000G (LTE & GNSS) ===");
+    Serial.printf("Pin PWRKEY:              GPIO %u\n", pwrKeyPin_);
     Serial.printf("Modem listo:             %s\n", isReady_ ? "SI" : "NO");
     Serial.printf("GNSS alimentado:         %s\n", gnssPowered_ ? "SI" : "NO");
     Serial.printf("Fix satelital (3D):      %s\n", cachedLocation_.isValid ? "SI" : "NO");
