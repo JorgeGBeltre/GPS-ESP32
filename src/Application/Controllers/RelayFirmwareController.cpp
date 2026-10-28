@@ -52,6 +52,8 @@ void RelayFirmwareController::setup() {
         log_.info("[CTRL] Sistema OPERACIONAL");
     } else {
         state_ = State::Connecting;
+        lastReconnectAttemptMs_ = clock_.nowMs();
+        hasAttemptedReconnect_ = true;
         indicator_.show(domain::IndicatorStatus::Connecting);
     }
 }
@@ -97,15 +99,29 @@ void RelayFirmwareController::tick() {
         accidentService_->process();
     }
 
+    unsigned long now = clock_.nowMs();
+
     if (state_ == State::Connecting) {
-        if (connectivity_.ensureConnected()) {
-            state_ = State::Operational;
-            indicator_.show(domain::IndicatorStatus::Operational);
-            log_.info("[CTRL] Estado -> OPERATIONAL");
+        if (gpsProvider_ && now - lastGpsPublishMs_ >= RECONNECT_INTERVAL_MS) {
+            lastGpsPublishMs_ = now;
+            domain::GpsLocation loc;
+            gpsProvider_->readData(loc);
+        }
+
+        if (!hasAttemptedReconnect_ || now - lastReconnectAttemptMs_ >= RECONNECT_INTERVAL_MS) {
+            hasAttemptedReconnect_ = true;
+            lastReconnectAttemptMs_ = now;
+            if (connectivity_.ensureConnected()) {
+                state_ = State::Operational;
+                indicator_.show(domain::IndicatorStatus::Operational);
+                log_.info("[CTRL] Estado -> OPERATIONAL");
+            }
         }
     } else if (state_ == State::Operational) {
         if (!connectivity_.isOnline()) {
             indicator_.show(domain::IndicatorStatus::Connecting);
+            lastReconnectAttemptMs_ = now;
+            hasAttemptedReconnect_ = true;
             if (!connectivity_.ensureConnected()) {
                 state_ = State::Connecting;
                 return;
@@ -114,7 +130,6 @@ void RelayFirmwareController::tick() {
 
         connectivity_.transport().loop();
 
-        unsigned long now = clock_.nowMs();
         if (now - lastStatusPublishMs_ >= STATUS_INTERVAL_MS) {
             lastStatusPublishMs_ = now;
             telemetry_.publishStatus();

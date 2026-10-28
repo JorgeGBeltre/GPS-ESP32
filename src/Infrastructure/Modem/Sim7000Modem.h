@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <HardwareSerial.h>
+#include <TinyGPSPlus.h>
 #include <string>
 #include <vector>
 #include "Domain/Interfaces/IGpsProvider.h"
@@ -49,18 +50,31 @@ public:
 private:
     bool sendATCommand(const String& cmd, const String& expectedResponse, unsigned long timeoutMs = 2000);
     String sendATCommandWithReply(const String& cmd, unsigned long timeoutMs = 2000);
+    bool probeAtOrNmea(uint32_t baud, uint8_t rxPin, uint8_t txPin, int attempts, unsigned long timeoutMs);
+    bool listenForNmea(uint32_t baud, uint8_t rxPin, uint8_t txPin, unsigned long durationMs);
+    void configureGnssAt();
     void queryGnss();
     void parseGnssInf(const String& line);
+    void processIncomingByte(char c);
+    void parseNmeaLine(const String& line);
+    void syncFromNmea();
 
     HardwareSerial& serial_;
     uint8_t         rxPin_;
     uint8_t         txPin_;
     uint8_t         pwrKeyPin_;
     uint32_t        baud_;
+    uint32_t        activeBaud_;
     std::string     emergencyPhone_;
 
+    TinyGPSPlus     nmeaGps_;
+    String          nmeaLineBuf_;
+
+    bool            initialized_ = false;
     bool            isReady_ = false;
+    bool            nmeaMode_ = false;
     bool            gnssPowered_ = false;
+    uint32_t        rxBytesCount_ = 0;
     unsigned long   lastGnssQueryMs_ = 0;
     unsigned long   lastReadyCheckMs_ = 0;
     unsigned long   lastWarningMs_ = 0;
@@ -68,7 +82,10 @@ private:
     domain::GpsLocation cachedLocation_;
     int                 satellitesInView_ = 0;
     int                 satellitesUsed_ = 0;
+    int                 gsvSatsGps_ = 0;
+    int                 gsvSatsGlonass_ = 0;
     int                 maxC_N0_ = 0;
+    String              lastCgnsInfRaw_;
 };
 
 } // namespace relay::infra

@@ -116,7 +116,6 @@ void setup() {
 
     // Initialize sensors and communication hardware
     g_accidentDetector.begin();
-    g_sim7000.begin();
 
     if (SMS_ALERTS_ENABLED) {
         g_sim7000.setCaCert(root_ca_pem);
@@ -194,8 +193,9 @@ void setup() {
 void loop() {
     if (g_controller) {
         g_controller->tick();
+    } else {
+        g_sim7000.update();
     }
-    g_sim7000.update();
 
     if (Serial.available()) {
         String cmd = Serial.readStringUntil('\n');

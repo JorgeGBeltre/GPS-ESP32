@@ -11,12 +11,17 @@ TinyGpsPlusProvider::TinyGpsPlusProvider(HardwareSerial& serial,
 void TinyGpsPlusProvider::begin() {
     Serial.printf("[GPS] Inicializando UART en baud %u (RX: %u, TX: %u)...\n", baud_, rxPin_, txPin_);
     gpsSerial_.begin(baud_, SERIAL_8N1, rxPin_, txPin_);
-    delay(100);
+
+    unsigned long start = millis();
+    while (millis() - start < 1100 && gpsSerial_.available() == 0) {
+        delay(20);
+    }
 
     int bytesAvailable = gpsSerial_.available();
     Serial.printf("[GPS] Bytes disponibles en buffer: %d\n", bytesAvailable);
     if (bytesAvailable > 0) {
         Serial.println("[GPS] Modulo GPS detectado y transmitiendo");
+        update();
     } else {
         Serial.println("[GPS] Esperando transmision NMEA del receptor GPS...");
     }

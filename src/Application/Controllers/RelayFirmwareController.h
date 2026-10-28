@@ -87,6 +87,9 @@ private:
     static constexpr unsigned long STATUS_INTERVAL_MS = 3600000;
     static constexpr unsigned long GPS_INTERVAL_MS = 30000;
     static constexpr unsigned long TIME_SYNC_INTERVAL_MS = 3600000;
+    static constexpr unsigned long RECONNECT_INTERVAL_MS = 10000;
+    unsigned long                  lastReconnectAttemptMs_ = 0;
+    bool                           hasAttemptedReconnect_ = false;
 };
 
 }
