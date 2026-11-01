@@ -8,8 +8,8 @@
 
 #define SERVICE_UUID          "12345678-1234-1234-1234-123456789abc"
 #define CHAR_APN_UUID         "aaaaaaaa-bbbb-cccc-dddd-000000000001"
-#define CHAR_APN_USER_UUID    "aaaaaaaa-bbbb-cccc-dddd-000000000002"
-#define CHAR_APN_PASS_UUID    "aaaaaaaa-bbbb-cccc-dddd-000000000003"
+#define CHAR_APNUSER_UUID     "aaaaaaaa-bbbb-cccc-dddd-000000000002"
+#define CHAR_APNPASS_UUID     "aaaaaaaa-bbbb-cccc-dddd-000000000003"
 #define CHAR_BROKER_UUID      "aaaaaaaa-bbbb-cccc-dddd-000000000004"
 #define CHAR_PORT_UUID        "aaaaaaaa-bbbb-cccc-dddd-000000000005"
 #define CHAR_MQTTUSER_UUID    "aaaaaaaa-bbbb-cccc-dddd-000000000006"
@@ -37,12 +37,8 @@ static bool parseJsonCredentials(const std::string& raw) {
     }
 
     if (doc.containsKey("apn")) config.apn = doc["apn"].as<String>();
-
     if (doc.containsKey("apn_user")) config.apn_user = doc["apn_user"].as<String>();
-    else if (doc.containsKey("apnuser")) config.apn_user = doc["apnuser"].as<String>();
-
     if (doc.containsKey("apn_pass")) config.apn_pass = doc["apn_pass"].as<String>();
-    else if (doc.containsKey("apnpass")) config.apn_pass = doc["apnpass"].as<String>();
 
     if (doc.containsKey("wifi_ssid")) config.wifi_ssid = doc["wifi_ssid"].as<String>();
     else if (doc.containsKey("ssid")) config.wifi_ssid = doc["ssid"].as<String>();
@@ -85,6 +81,28 @@ static bool parseJsonCredentials(const std::string& raw) {
     if (doc.containsKey("ota_hmac_key")) config.ota_hmac_key = doc["ota_hmac_key"].as<String>();
     else if (doc.containsKey("ota_key")) config.ota_hmac_key = doc["ota_key"].as<String>();
 
+    if (doc.containsKey("startup")) {
+        String st = doc["startup"].as<String>();
+        st.toLowerCase();
+        config.startup_mode = (st == "on") ? 1 : (st == "stay" ? 2 : 0);
+    }
+    if (doc.containsKey("pulse")) {
+        String p = doc["pulse"].as<String>();
+        p.toLowerCase();
+        config.pulse_enabled = (p == "on" || p == "1" || p == "true");
+    }
+    if (doc.containsKey("pulseWidth")) {
+        uint32_t pw = doc["pulseWidth"].as<uint32_t>();
+        if (pw >= 500 && pw <= 36000000 && (pw % 500) == 0) {
+            config.pulse_width_ms = pw;
+        }
+    }
+    if (doc.containsKey("sledOnline")) {
+        String sl = doc["sledOnline"].as<String>();
+        sl.toLowerCase();
+        config.sled_online = (sl != "off" && sl != "0" && sl != "false");
+    }
+
     Serial.println("[BLE] Trama JSON de aprovisionamiento procesada con éxito");
     return true;
 }
@@ -116,8 +134,8 @@ static bool parseKeyValueFrame(const std::string& raw) {
         for (char& ch : k) ch = tolower((unsigned char)ch);
 
         if (k == "apn") { config.apn = v.c_str(); matched = true; }
-        else if (k == "apn_user" || k == "apnuser") { config.apn_user = v.c_str(); matched = true; }
-        else if (k == "apn_pass" || k == "apnpass") { config.apn_pass = v.c_str(); matched = true; }
+        else if (k == "apn_user") { config.apn_user = v.c_str(); matched = true; }
+        else if (k == "apn_pass") { config.apn_pass = v.c_str(); matched = true; }
         else if (k == "wifi_ssid" || k == "ssid") { config.wifi_ssid = v.c_str(); matched = true; }
         else if (k == "wifi_pass" || k == "pass" || k == "password") { config.wifi_pass = v.c_str(); matched = true; }
         else if (k == "mqtt_broker" || k == "broker" || k == "server") { config.mqtt_broker = v.c_str(); matched = true; }
@@ -145,9 +163,11 @@ static bool parseFrame(const std::string& raw) {
 
 class ServerCallbacks : public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* pServer) override {
+        (void)pServer;
         Serial.println("[BLE] App móvil conectada al dispositivo.");
     }
     void onDisconnect(NimBLEServer* pServer) override {
+        (void)pServer;
         Serial.println("[BLE] App móvil desconectada.");
     }
 };
@@ -246,13 +266,12 @@ class FrameCallback : public NimBLECharacteristicCallbacks {
 public:
     void onRead(NimBLECharacteristic* c) override {
         StaticJsonDocument<512> idDoc;
-        idDoc["device_type"] = "GPS-Tracker";
+        idDoc["device_type"] = "GPS-Relay";
         idDoc["device_id"]   = config.device_id;
         idDoc["device_key"]  = config.device_key;
         idDoc["mac"]         = WiFi.macAddress();
         idDoc["version"]     = FIRMWARE_VERSION;
         idDoc["apn"]         = config.apn;
-        idDoc["apn_user"]    = config.apn_user;
         idDoc["wifi_ssid"]   = config.wifi_ssid;
         idDoc["server"]      = config.mqtt_broker;
         idDoc["port"]        = config.mqtt_port;
@@ -285,11 +304,19 @@ public:
 void initBLEProvisioning() {
 }
 
-bool runBLEProvisioning(unsigned long timeoutMs) {
-    Serial.println("\n[BLE] =========================================");
-    Serial.println("[BLE] Iniciando servidor BLE de aprovisionamiento (Estilo Sonoff)...");
-    Serial.println("[BLE] =========================================");
+QuickPairingResult runQuickPairing(unsigned long timeoutMs,
+                                   relay::domain::IIndicator* indicator,
+                                   relay::domain::IButtonHandler* button) {
+    Serial.println("\n[PAIRING] =========================================================");
+    Serial.println("[PAIRING] Iniciando QUICK PAIRING (BLE GATT + SmartConfig ESP-Touch)");
+    Serial.println("[PAIRING] - Pulsación larga (5s): Cambiar a SoftAP GPS-<ChipID>");
+    Serial.println("[PAIRING] - Pulsación corta:      Salir de modo emparejamiento");
+    Serial.println("[PAIRING] =========================================================");
     _configSaved = false;
+
+    if (indicator) {
+        indicator->show(relay::domain::IndicatorStatus::QuickPairing);
+    }
 
     if (config.device_id.length() == 0) {
         uint64_t chipId = ESP.getEfuseMac();
@@ -310,6 +337,11 @@ bool runBLEProvisioning(unsigned long timeoutMs) {
         config.device_key = String(buf);
     }
 
+    // 1. Activar SmartConfig (ESP-Touch / AirKiss) en paralelo
+    WiFi.mode(WIFI_STA);
+    WiFi.beginSmartConfig();
+
+    // 2. Activar servidor BLE GATT 'GPS-<DeviceID>'
     String advName = "GPS-" + config.device_id;
     NimBLEDevice::init(advName.c_str());
     NimBLEDevice::setMTU(512);
@@ -321,7 +353,7 @@ bool runBLEProvisioning(unsigned long timeoutMs) {
     if (dis) {
         NimBLECharacteristic* mChar = dis->createCharacteristic(
             NimBLEUUID((uint16_t)0x2A24), NIMBLE_PROPERTY::READ);
-        mChar->setValue("VESIS GPS-Tracker ESP32");
+        mChar->setValue("GPS-Relay ESP32");
 
         NimBLECharacteristic* sChar = dis->createCharacteristic(
             NimBLEUUID((uint16_t)0x2A25), NIMBLE_PROPERTY::READ);
@@ -353,8 +385,8 @@ bool runBLEProvisioning(unsigned long timeoutMs) {
     };
 
     mkChar(CHAR_APN_UUID,       &config.apn);
-    mkChar(CHAR_APN_USER_UUID,  &config.apn_user);
-    mkChar(CHAR_APN_PASS_UUID,  &config.apn_pass);
+    mkChar(CHAR_APNUSER_UUID,   &config.apn_user);
+    mkChar(CHAR_APNPASS_UUID,   &config.apn_pass);
     mkChar(CHAR_WIFISSID_UUID,  &config.wifi_ssid);
     mkChar(CHAR_WIFIPASS_UUID,  &config.wifi_pass);
     mkChar(CHAR_BROKER_UUID,    &config.mqtt_broker);
@@ -387,13 +419,12 @@ bool runBLEProvisioning(unsigned long timeoutMs) {
     frameChar->setCallbacks(new FrameCallback());
 
     StaticJsonDocument<512> initDoc;
-    initDoc["device_type"] = "GPS-Tracker";
+    initDoc["device_type"] = "GPS-Relay";
     initDoc["device_id"]   = config.device_id;
     initDoc["device_key"]  = config.device_key;
     initDoc["mac"]         = WiFi.macAddress();
     initDoc["version"]     = FIRMWARE_VERSION;
     initDoc["apn"]         = config.apn;
-    initDoc["apn_user"]    = config.apn_user;
     initDoc["wifi_ssid"]   = config.wifi_ssid;
     initDoc["server"]      = config.mqtt_broker;
     initDoc["port"]        = config.mqtt_port;
@@ -417,26 +448,70 @@ bool runBLEProvisioning(unsigned long timeoutMs) {
     adv->setName(advName.c_str());
     adv->start();
 
-    Serial.printf("[BLE] Publicitando como '%s' durante %lu ms\n", advName.c_str(), timeoutMs);
-    Serial.printf("[BLE] Service UUID: %s\n", SERVICE_UUID);
-    Serial.printf("[BLE] Device ID:    %s\n", config.device_id.c_str());
-    Serial.printf("[BLE] Device Key:   %s\n", config.device_key.c_str());
-    Serial.println("[BLE] Estado: Dispositivo listo para ser reclamado (ready_to_claim)...");
+    Serial.printf("[BLE] Publicitando como '%s' + SmartConfig activo durante %lu ms\n", advName.c_str(), timeoutMs);
+
+    if (button) {
+        unsigned long releaseWaitStart = millis();
+        while (digitalRead(button->getPin()) == LOW && (millis() - releaseWaitStart) < 3000) {
+            if (indicator) indicator->update();
+            delay(20);
+        }
+        button->init();
+    }
+
+    auto cleanupRadios = [&]() {
+        WiFi.stopSmartConfig();
+        adv->stop();
+        NimBLEDevice::deinit(true);
+    };
 
     unsigned long start = millis();
     while ((millis() - start) < timeoutMs) {
-        if (_configSaved) {
-            Serial.println("[BLE] ¡Aprovisionamiento y enlace a la cuenta completados con éxito!");
-            delay(600);
-            adv->stop();
-            NimBLEDevice::deinit(true);
-            return true;
+        if (indicator) {
+            indicator->update();
         }
-        delay(100);
+
+        if (_configSaved) {
+            Serial.println("[PAIRING] ¡Aprovisionamiento BLE completado con éxito!");
+            delay(600);
+            cleanupRadios();
+            return QuickPairingResult::Provisioned;
+        }
+
+        if (WiFi.smartConfigDone()) {
+            String scSsid = WiFi.SSID();
+            String scPass = WiFi.psk();
+            if (scSsid.length() > 0) {
+                config.wifi_ssid = scSsid;
+                config.wifi_pass = scPass;
+                saveConfig();
+                Serial.printf("[PAIRING] ¡SmartConfig completado! SSID: %s\n", scSsid.c_str());
+                cleanupRadios();
+                return QuickPairingResult::Provisioned;
+            }
+        }
+
+        if (button) {
+            auto ev = button->update();
+            if (ev == relay::domain::ButtonEvent::LongPress) {
+                Serial.println("[PAIRING] 2ª pulsación larga (5s) -> Conmutando a SoftAP Compatible (GPS-<ChipID>)...");
+                cleanupRadios();
+                return QuickPairingResult::SwitchToSoftAp;
+            } else if (ev == relay::domain::ButtonEvent::ShortPress) {
+                Serial.println("[PAIRING] Pulsación corta detectada -> Cancelando modo emparejamiento.");
+                cleanupRadios();
+                return QuickPairingResult::CancelledByButton;
+            }
+        }
+
+        delay(20);
     }
 
-    Serial.println("[BLE] Tiempo de espera agotado (timeout) sin recibir configuración.");
-    adv->stop();
-    NimBLEDevice::deinit(true);
-    return false;
+    Serial.println("[PAIRING] Tiempo de espera de Quick Pairing agotado.");
+    cleanupRadios();
+    return QuickPairingResult::Timeout;
+}
+
+bool runBLEProvisioning(unsigned long timeoutMs) {
+    return runQuickPairing(timeoutMs, nullptr, nullptr) == QuickPairingResult::Provisioned;
 }

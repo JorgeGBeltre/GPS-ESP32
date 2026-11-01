@@ -35,7 +35,8 @@ constexpr uint8_t RelayPin1 = 4;
 constexpr uint8_t BUTTON_PIN1 = 0;
 constexpr uint8_t wifiLed = 2;
 constexpr uint8_t DEBOUNCE_TIME = 50;
-constexpr uint16_t BUTTON_LONG_PRESS_TIME = 3000;
+constexpr uint16_t BUTTON_LONG_PRESS_TIME = 5000;
+constexpr uint16_t LAN_HTTP_PORT = 8081;
 
 // SIM7000G (LTE & GNSS) & MPU6050 Hardware Pins
 constexpr uint8_t SIM7000_PWRKEY_PIN = 23;

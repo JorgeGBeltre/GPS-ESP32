@@ -10,11 +10,12 @@ public:
                     const char* server1 = "pool.ntp.org",
                     const char* server2 = "time.nist.gov")
         : gmtOffsetSec_(gmtOffsetSec), daylightOffsetSec_(daylightOffsetSec),
-          server1_(server1), server2_(server2) {}
+           server1_(server1), server2_(server2) {}
 
     bool sync() override;
     std::string isoTimestamp() override;
     bool isSynchronized() override;
+    uint32_t epochSeconds() override;
 
 private:
     long gmtOffsetSec_;

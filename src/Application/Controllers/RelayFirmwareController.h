@@ -8,8 +8,10 @@
 #include "Application/Services/ConnectivityService.h"
 #include "Application/Services/RelayService.h"
 #include "Application/Services/TelemetryService.h"
+#include "Application/Services/TimerSchedulerService.h"
 #include "Domain/Interfaces/IButtonHandler.h"
 #include "Domain/Interfaces/IClock.h"
+#include "Domain/Interfaces/IConfigRepository.h"
 #include "Domain/Interfaces/IGpsProvider.h"
 #include "Domain/Interfaces/IIndicator.h"
 #include "Domain/Interfaces/ILogger.h"
@@ -27,6 +29,7 @@ public:
     };
 
     using ApTriggerCallback = std::function<void()>;
+    using LocalStateChangeCallback = std::function<void()>;
 
     RelayFirmwareController(RelayService& relays,
                             ConnectivityService& connectivity,
@@ -40,14 +43,19 @@ public:
                             const MqttTopics& topics,
                             ApTriggerCallback apCallback = nullptr,
                             AccidentService* accidentService = nullptr,
-                            domain::IGpsProvider* gpsProvider = nullptr);
+                            domain::IGpsProvider* gpsProvider = nullptr,
+                            TimerSchedulerService* timerScheduler = nullptr,
+                            domain::IConfigRepository* configRepo = nullptr,
+                            unsigned long statusIntervalMs = 3600000,
+                            unsigned long timeSyncIntervalMs = 3600000,
+                            unsigned long gpsIntervalMs = 30000);
 
     void registerButton(domain::IButtonHandler& button, const std::string& targetDeviceId);
-
+    void setOnLocalStateChangeCallback(LocalStateChangeCallback cb) { onLocalStateChangeCb_ = std::move(cb); }
     void setAccidentService(AccidentService* accident) { accidentService_ = accident; }
     void setGpsProvider(domain::IGpsProvider* gps) { gpsProvider_ = gps; }
 
-    void setup();
+    void setup(bool relaysAlreadyInitialized = false);
     void tick();
 
     void onMqttConnected();
@@ -63,6 +71,7 @@ private:
 
     void handleButtonEvents();
     void processCommand(const std::string& command);
+    void updateIndicatorForConnectivity();
 
     RelayService&                  relays_;
     ConnectivityService&           connectivity_;
@@ -75,18 +84,22 @@ private:
     domain::ILogger&               log_;
     const MqttTopics               topics_;
     ApTriggerCallback              apCallback_;
+    LocalStateChangeCallback       onLocalStateChangeCb_;
     AccidentService*               accidentService_;
     domain::IGpsProvider*          gpsProvider_;
+    TimerSchedulerService*         timerScheduler_;
+    domain::IConfigRepository*     configRepo_;
 
     std::vector<ButtonBinding>     buttons_;
     State                          state_ = State::Connecting;
 
+    unsigned long                  statusIntervalMs_;
+    unsigned long                  timeSyncIntervalMs_;
+    unsigned long                  gpsIntervalMs_;
     unsigned long                  lastStatusPublishMs_ = 0;
-    unsigned long                  lastGpsPublishMs_ = 0;
     unsigned long                  lastTimeSyncMs_ = 0;
-    static constexpr unsigned long STATUS_INTERVAL_MS = 3600000;
-    static constexpr unsigned long GPS_INTERVAL_MS = 30000;
-    static constexpr unsigned long TIME_SYNC_INTERVAL_MS = 3600000;
+    unsigned long                  lastGpsPublishMs_ = 0;
+    uint32_t                       lastEvaluatedEpochSec_ = 0;
     static constexpr unsigned long RECONNECT_INTERVAL_MS = 10000;
     unsigned long                  lastReconnectAttemptMs_ = 0;
     bool                           hasAttemptedReconnect_ = false;
