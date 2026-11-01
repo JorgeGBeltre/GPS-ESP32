@@ -57,6 +57,7 @@ void LanZeroconfServer::startServer() {
     registerEndpoint("/zeroconf/info");
     registerEndpoint("/zeroconf/signal_strength");
     registerEndpoint("/zeroconf/wifi");
+    registerEndpoint("/zeroconf/config");
     registerEndpoint("/zeroconf/timers");
     registerEndpoint("/zeroconf/ota_unlock");
 
@@ -265,6 +266,7 @@ void LanZeroconfServer::dispatchZeroconf(const char* uri, const String& rawBody,
             "{\"sequence\":\"%u\",\"seq\":%u,\"error\":0,\"data\":{"
             "\"deviceid\":\"%s\",\"switch\":\"%s\",\"startup\":\"%s\","
             "\"pulse\":\"%s\",\"pulseWidth\":%u,\"sledOnline\":\"%s\","
+            "\"apn\":\"%s\",\"emergencyPhone\":\"%s\","
             "\"fwVersion\":\"%s\",\"rssi\":%d}}",
             sequence_, sequence_,
             activeDeviceId_.c_str(),
@@ -273,20 +275,57 @@ void LanZeroconfServer::dispatchZeroconf(const char* uri, const String& rawBody,
             relays_.isPulseEnabled() ? "on" : "off",
             relays_.getPulseWidthMs(),
             indicator_.isSledOnline() ? "on" : "off",
+            devCfg.apn.c_str(),
+            devCfg.emergencyPhone.c_str(),
             FIRMWARE_VERSION,
             (int)WiFi.RSSI());
         return;
     }
 
-    if (std::strcmp(uri, "/zeroconf/wifi") == 0) {
-        const char* ssid = dataObj["ssid"];
-        const char* pwd = dataObj["password"] | "";
-        if (!ssid || std::strlen(ssid) == 0 || std::strlen(ssid) > 32) {
+    if (std::strcmp(uri, "/zeroconf/wifi") == 0 || std::strcmp(uri, "/zeroconf/config") == 0) {
+        const char* ssid = dataObj["ssid"] | dataObj["wifi_ssid"];
+        if (std::strcmp(uri, "/zeroconf/wifi") == 0 && (!ssid || std::strlen(ssid) == 0 || std::strlen(ssid) > 32)) {
             writeError(400);
             return;
         }
-        devCfg.wifiSsid = ssid;
-        devCfg.wifiPass = pwd;
+        if (ssid && std::strlen(ssid) > 0 && std::strlen(ssid) <= 32) {
+            devCfg.wifiSsid = ssid;
+            devCfg.wifiPass = dataObj["password"] | (dataObj["wifi_pass"] | "");
+        }
+        if (const char* apn = dataObj["apn"]) {
+            if (std::strlen(apn) > 0) devCfg.apn = apn;
+        }
+        if (const char* au = dataObj["apn_user"]) {
+            devCfg.apnUser = au;
+        }
+        if (const char* ap = dataObj["apn_pass"]) {
+            devCfg.apnPass = ap;
+        }
+        if (const char* ph = dataObj["emergency_phone"] | dataObj["phone"]) {
+            if (std::strlen(ph) > 0) devCfg.emergencyPhone = ph;
+        }
+        if (dataObj.containsKey("sensitivity")) {
+            devCfg.accidentSensitivity = dataObj["sensitivity"].as<int>();
+        }
+        if (dataObj.containsKey("rollover_angle")) {
+            devCfg.rolloverAngleDeg = dataObj["rollover_angle"].as<int>();
+        }
+        if (const char* brk = dataObj["mqtt_broker"] | (dataObj["serverName"] | dataObj["server"])) {
+            if (std::strlen(brk) > 0) devCfg.mqttBroker = brk;
+        }
+        if (dataObj.containsKey("mqtt_port") || dataObj.containsKey("port")) {
+            int p = dataObj["mqtt_port"] | (dataObj["port"] | 0);
+            if (p > 0 && p <= 65535) devCfg.mqttPort = p;
+        }
+        if (const char* usr = dataObj["mqtt_user"] | (dataObj["apikey"] | dataObj["account"])) {
+            if (std::strlen(usr) > 0) devCfg.mqttUser = usr;
+        }
+        if (const char* mp = dataObj["mqtt_pass"]) {
+            devCfg.mqttPass = mp;
+        }
+        if (const char* tok = dataObj["bind_token"] | dataObj["token"]) {
+            devCfg.bindToken = tok;
+        }
         configRepo_.save(devCfg);
         writeError(0);
         return;

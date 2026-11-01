@@ -141,6 +141,15 @@ void setup() {
   if (!devConfig.apn.empty()) {
     g_sim7000.setApn(devConfig.apn, devConfig.apnUser, devConfig.apnPass);
   }
+  if (!devConfig.emergencyPhone.empty()) {
+    g_sim7000.setEmergencyPhone(devConfig.emergencyPhone);
+  }
+  if (devConfig.accidentSensitivity > 0) {
+    g_motionDetector.setSensitivity(devConfig.accidentSensitivity);
+  }
+  if (devConfig.rolloverAngleDeg > 0) {
+    g_motionDetector.setRolloverAngle(devConfig.rolloverAngleDeg);
+  }
 
   g_wifi.setCredentials(devConfig.wifiSsid, devConfig.wifiPass);
 
@@ -169,7 +178,8 @@ void setup() {
       g_motionDetector,  g_sim7000,
       g_sim7000,         telemetry,
       g_clock,           g_logger,
-      EMERGENCY_PHONE,   SMS_ALERTS_ENABLED,
+      !devConfig.emergencyPhone.empty() ? devConfig.emergencyPhone : std::string(EMERGENCY_PHONE),
+      devConfig.smsEnabled,
       ACCIDENT_COOLDOWN, ACCIDENT_CHECK_INTERVAL};
   g_accidentService = &accidentService;
 

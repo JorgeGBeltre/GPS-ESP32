@@ -10,6 +10,11 @@ struct AppConfig {
     String   apn;
     String   apn_user;
     String   apn_pass;
+    String   emergency_phone = "+18090000000";
+    bool     sms_enabled     = true;
+    int      sensitivity     = 2000;
+    int      rollover_angle  = 60;
+
     String   wifi_ssid;
     String   wifi_pass;
     String   mqtt_broker;

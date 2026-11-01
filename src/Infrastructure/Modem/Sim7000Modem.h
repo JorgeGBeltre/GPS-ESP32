@@ -7,6 +7,7 @@
 #include <vector>
 #include "Domain/Interfaces/IGpsProvider.h"
 #include "Domain/Interfaces/IGsmAlertSender.h"
+#include "Domain/Interfaces/ILogger.h"
 #include "Domain/Entities/GpsLocation.h"
 #include "Domain/Entities/AccidentEvent.h"
 
@@ -20,6 +21,15 @@ public:
                  uint8_t pwrKeyPin = 23,
                  uint32_t baud = 115200,
                  const std::string& emergencyPhone = "+18090000000");
+
+    Sim7000Modem(HardwareSerial& serial,
+                 uint8_t rxPin,
+                 uint8_t txPin,
+                 uint8_t pwrKeyPin,
+                 uint32_t baud,
+                 domain::ILogger& /*logger*/,
+                 const std::string& emergencyPhone = "+18090000000")
+        : Sim7000Modem(serial, rxPin, txPin, pwrKeyPin, baud, emergencyPhone) {}
 
     // Electronic Power Control (PWRKEY)
     void powerOn();
@@ -46,6 +56,15 @@ public:
 
     void setEmergencyPhone(const std::string& phone) { emergencyPhone_ = phone; }
     void setCaCert(const char* caCertPem);
+    void setApn(const std::string& apn, const std::string& user = "", const std::string& pass = "") {
+        apn_     = apn;
+        apnUser_ = user;
+        apnPass_ = pass;
+    }
+    void setRawLogging(bool enabled) { rawLogging_ = enabled; }
+    void enableGnss(bool enable) {
+        if (enable) configureGnssAt();
+    }
 
 private:
     bool sendATCommand(const String& cmd, const String& expectedResponse, unsigned long timeoutMs = 2000);
@@ -66,6 +85,10 @@ private:
     uint32_t        baud_;
     uint32_t        activeBaud_;
     std::string     emergencyPhone_;
+    std::string     apn_;
+    std::string     apnUser_;
+    std::string     apnPass_;
+    bool            rawLogging_ = false;
 
     TinyGPSPlus     nmeaGps_;
     String          nmeaLineBuf_;

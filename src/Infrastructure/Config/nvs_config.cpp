@@ -51,6 +51,10 @@ void loadConfig() {
     config.apn              = preferences.getString("apn", "internet.claro.com.do");
     config.apn_user         = preferences.getString("apn_user", "");
     config.apn_pass         = preferences.getString("apn_pass", "");
+    config.emergency_phone  = preferences.getString("emerg_ph", EMERGENCY_PHONE);
+    config.sms_enabled      = preferences.getBool("sms_en", SMS_ALERTS_ENABLED);
+    config.sensitivity      = preferences.getInt("acc_sens", ACCIDENT_SENSITIVITY);
+    config.rollover_angle   = preferences.getInt("roll_deg", ROLLOVER_ANGLE_DEG);
     config.wifi_ssid        = preferences.getString("wifi_ssid", "");
     config.wifi_pass        = preferences.getString("wifi_pass", "");
     config.mqtt_broker      = preferences.getString("mqtt_broker", MQTT_SERVER);
@@ -81,6 +85,10 @@ void saveConfig() {
     preferences.putString("apn",         config.apn);
     preferences.putString("apn_user",    config.apn_user);
     preferences.putString("apn_pass",    config.apn_pass);
+    preferences.putString("emerg_ph",    config.emergency_phone);
+    preferences.putBool("sms_en",        config.sms_enabled);
+    preferences.putInt("acc_sens",       config.sensitivity);
+    preferences.putInt("roll_deg",       config.rollover_angle);
     preferences.putString("wifi_ssid",   config.wifi_ssid);
     preferences.putString("wifi_pass",   config.wifi_pass);
     preferences.putString("mqtt_broker", config.mqtt_broker);

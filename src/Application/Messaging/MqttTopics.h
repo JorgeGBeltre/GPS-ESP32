@@ -22,7 +22,8 @@ struct MqttTopics {
     std::string gps;           // telemetry/<chipId>/gps
     std::string alerts;        // telemetry/<chipId>/accidents
 
-    static MqttTopics forDevice(const std::string& chipId) {
+    static MqttTopics forDevice(const std::string& chipId, const std::string& switchBase = "device_switch1") {
+        (void)switchBase;
         MqttTopics t;
         t.telemetry    = "telemetry/" + chipId;
         t.events       = "events/" + chipId;

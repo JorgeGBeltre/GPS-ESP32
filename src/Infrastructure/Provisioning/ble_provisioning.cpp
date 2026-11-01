@@ -40,6 +40,13 @@ static bool parseJsonCredentials(const std::string& raw) {
     if (doc.containsKey("apn_user")) config.apn_user = doc["apn_user"].as<String>();
     if (doc.containsKey("apn_pass")) config.apn_pass = doc["apn_pass"].as<String>();
 
+    if (doc.containsKey("emergency_phone")) config.emergency_phone = doc["emergency_phone"].as<String>();
+    else if (doc.containsKey("phone")) config.emergency_phone = doc["phone"].as<String>();
+
+    if (doc.containsKey("sms_enabled")) config.sms_enabled = doc["sms_enabled"].as<bool>();
+    if (doc.containsKey("sensitivity")) config.sensitivity = doc["sensitivity"].as<int>();
+    if (doc.containsKey("rollover_angle")) config.rollover_angle = doc["rollover_angle"].as<int>();
+
     if (doc.containsKey("wifi_ssid")) config.wifi_ssid = doc["wifi_ssid"].as<String>();
     else if (doc.containsKey("ssid")) config.wifi_ssid = doc["ssid"].as<String>();
 
@@ -136,6 +143,9 @@ static bool parseKeyValueFrame(const std::string& raw) {
         if (k == "apn") { config.apn = v.c_str(); matched = true; }
         else if (k == "apn_user") { config.apn_user = v.c_str(); matched = true; }
         else if (k == "apn_pass") { config.apn_pass = v.c_str(); matched = true; }
+        else if (k == "emergency_phone" || k == "phone") { config.emergency_phone = v.c_str(); matched = true; }
+        else if (k == "sensitivity") { config.sensitivity = atoi(v.c_str()); matched = true; }
+        else if (k == "rollover_angle") { config.rollover_angle = atoi(v.c_str()); matched = true; }
         else if (k == "wifi_ssid" || k == "ssid") { config.wifi_ssid = v.c_str(); matched = true; }
         else if (k == "wifi_pass" || k == "pass" || k == "password") { config.wifi_pass = v.c_str(); matched = true; }
         else if (k == "mqtt_broker" || k == "broker" || k == "server") { config.mqtt_broker = v.c_str(); matched = true; }

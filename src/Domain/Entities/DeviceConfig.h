@@ -35,14 +35,20 @@ inline StartupMode startupModeFromString(const std::string& str) {
 /**
  * @brief Entidad pura de dominio que contiene la configuración del dispositivo.
  * Desacoplada de frameworks o hardware para permitir compilación y pruebas en host.
- * Incluye campos para conectividad celular (APN), WiFi, MQTT, identidad de hardware,
- * OTA y comportamiento operativo (StartupMode, Inching/Pulse, SLED Online).
+ * Incluye campos para conectividad celular (APN), alertas SMS/accidentes, WiFi, MQTT,
+ * identidad de hardware, OTA y comportamiento operativo (StartupMode, Inching/Pulse, SLED Online).
  */
 struct DeviceConfig {
     // Conectividad celular (APN)
     std::string apn;
     std::string apnUser;
     std::string apnPass;
+
+    // Alertas SMS y detección de accidentes (MPU6050 + SIM7000G)
+    std::string emergencyPhone      = "+18090000000";
+    bool        smsEnabled          = true;
+    int         accidentSensitivity = 2000;
+    int         rolloverAngleDeg    = 60;
 
     // Conectividad WiFi
     std::string wifiSsid;

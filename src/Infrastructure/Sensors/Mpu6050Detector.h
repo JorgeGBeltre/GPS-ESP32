@@ -5,6 +5,7 @@
 #include <Wire.h>
 #include "Application/AccidentAlgorithm.h"
 #include "Domain/Interfaces/IAccidentDetector.h"
+#include "Domain/Interfaces/ILogger.h"
 
 namespace relay::infra {
 
@@ -18,6 +19,17 @@ public:
                     float harshBrakeG = -0.55f,
                     unsigned long checkIntervalMs = 100,
                     unsigned long cooldownMs = 60000);
+
+    Mpu6050Detector(uint8_t sdaPin,
+                    uint8_t sclPin,
+                    int sensitivity,
+                    int rolloverAngleDeg,
+                    float harshAccelG,
+                    float harshBrakeG,
+                    domain::ILogger& /*logger*/,
+                    unsigned long checkIntervalMs = 100,
+                    unsigned long cooldownMs = 60000)
+        : Mpu6050Detector(sdaPin, sclPin, sensitivity, rolloverAngleDeg, harshAccelG, harshBrakeG, checkIntervalMs, cooldownMs) {}
 
     void begin() override;
     bool check(domain::AccidentEvent& out, float currentSpeedKmph) override;

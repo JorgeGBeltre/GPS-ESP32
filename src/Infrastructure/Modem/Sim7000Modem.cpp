@@ -263,6 +263,15 @@ void Sim7000Modem::configureGnssAt() {
     sendATCommand("AT+CMGF=1", "OK", 500);     // Modo SMS texto
     sendATCommand("AT+CSCS=\"GSM\"", "OK", 500);
 
+    // Configurar contexto PDP y APN celular si fue aprovisionado
+    if (!apn_.empty()) {
+        String cgdcont = String("AT+CGDCONT=1,\"IP\",\"") + apn_.c_str() + "\"";
+        sendATCommand(cgdcont, "OK", 1000);
+        String cstt = String("AT+CSTT=\"") + apn_.c_str() + "\",\"" + apnUser_.c_str() + "\",\"" + apnPass_.c_str() + "\"";
+        sendATCommand(cstt, "OK", 1000);
+        Serial.printf("[SIM7000] APN celular configurado: %s\n", apn_.c_str());
+    }
+
     // Energizar alimentación de antena activa GNSS (3.05V en VAUX y GPIO4 en SGPIO)
     sendATCommand("AT+CVAUXV=3050", "OK", 500);
     sendATCommand("AT+CVAUXS=1", "OK", 500);

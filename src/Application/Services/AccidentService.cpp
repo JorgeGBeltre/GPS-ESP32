@@ -12,24 +12,28 @@ void AccidentService::process() {
     // Attach latest GPS fix
     gps_.readData(event.location);
 
-    auto id = deviceRepo_.identity();
-    std::string timestamp = timeProvider_.isoTimestamp();
-
     log_.warn("[ALERT] " + event.alertType() + " detectado! Lat: " +
               std::to_string(event.location.latitude) + ", Lon: " +
               std::to_string(event.location.longitude));
 
     // 1. Publish immediately to MQTT / MQTTS v5
-    if (connectivity_.transport().isConnected()) {
-        std::string payload = serializer_.formatAccidentAlert(id, event, timestamp);
+    if (telemetry_) {
+        telemetry_->publishEvent("ACCIDENT_ALERT", event.alertType() + " detectado", "alert");
+    } else if (connectivity_ && deviceRepo_ && timeProvider_ && serializer_ &&
+               connectivity_->transport().isConnected()) {
+        auto id = deviceRepo_->identity();
+        std::string timestamp = timeProvider_->isoTimestamp();
+        std::string payload = serializer_->formatAccidentAlert(id, event, timestamp);
         std::string topic = topics_.deviceEvents; // event/<chipId>
-        connectivity_.transport().publish(topic, payload);
+        connectivity_->transport().publish(topic, payload);
         log_.info("[ALERT] Alerta publicada en " + topic);
     }
 
     // 2. Dispatch SMS alert if modem sender is present and ready
     if (gsmSender_ && gsmSender_->isReady()) {
-        gsmSender_->sendAlert(event, event.location, timestamp, id.chipId);
+        std::string chipId = deviceRepo_ ? deviceRepo_->identity().chipId : "GPS-ESP32";
+        std::string ts = timeProvider_ ? timeProvider_->isoTimestamp() : event.location.timestamp;
+        gsmSender_->sendAlert(event, event.location, ts, chipId);
         log_.info("[ALERT] Alerta SMS enviada al modem celular");
     }
 }

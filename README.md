@@ -284,9 +284,10 @@ When connected to Wi-Fi, [`LanZeroconfServer`](file:///c:/Users/Jorge/Music/inte
 | `/zeroconf/pulse` | Configure Inching / Pulse mode (`{"pulse":"on","pulseWidth":1000}`) |
 | `/zeroconf/sled` | Enable or disable the online status LED (`{"sledOnline":"on"\|"off"}`) |
 | `/zeroconf/timers` | Configure local scheduled timers (`once`, `repeat`, `duration`) |
-| `/zeroconf/info` | Query current switch state, firmware version, and Wi-Fi RSSI |
+| `/zeroconf/info` | Query current switch state, cellular `apn`, emergency SMS settings (`emergencyPhone`, `smsEnabled`), MPU6050 thresholds (`sensitivity`, `rolloverAngle`), firmware version, and Wi-Fi RSSI |
 | `/zeroconf/signal_strength` | Query current Wi-Fi RSSI in dBm |
-| `/zeroconf/wifi` | Update Wi-Fi credentials in NVS |
+| `/zeroconf/wifi` | Update Wi-Fi credentials, cellular `apn` (`apn`, `apn_user`, `apn_pass`), and MQTT 5.0 broker parameters in NVS |
+| `/zeroconf/config` | Update cellular `apn`, `emergency_phone`, `sms_enabled`, MPU6050 `sensitivity` / `rollover_angle`, MQTT 5.0 broker, startup, pulse, and SLED in NVS |
 | `/zeroconf/ota_unlock` | Unlock local OTA updates |
 
 ---

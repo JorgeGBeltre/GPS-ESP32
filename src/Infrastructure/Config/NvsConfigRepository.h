@@ -68,24 +68,28 @@ public:
 private:
     static domain::DeviceConfig toDomain(const AppConfig& c) {
         domain::DeviceConfig d;
-        d.apn            = c.apn.c_str();
-        d.apnUser        = c.apn_user.c_str();
-        d.apnPass        = c.apn_pass.c_str();
-        d.wifiSsid       = c.wifi_ssid.c_str();
-        d.wifiPass       = c.wifi_pass.c_str();
-        d.mqttBroker     = c.mqtt_broker.c_str();
-        d.mqttPort       = c.mqtt_port;
-        d.mqttUser       = c.mqtt_user.c_str();
-        d.mqttPass       = c.mqtt_pass.c_str();
-        d.deviceId       = c.device_id.c_str();
-        d.deviceKey      = c.device_key.c_str();
-        d.bindToken      = c.bind_token.c_str();
-        d.otaHmacKey     = c.ota_hmac_key.c_str();
-        d.startupMode    = (c.startup_mode <= 2) ? static_cast<domain::StartupMode>(c.startup_mode) : domain::StartupMode::Off;
-        d.lastRelayState = c.last_relay_state;
-        d.pulseEnabled   = c.pulse_enabled;
-        d.pulseWidthMs   = c.pulse_width_ms;
-        d.sledOnline     = c.sled_online;
+        d.apn                 = c.apn.c_str();
+        d.apnUser             = c.apn_user.c_str();
+        d.apnPass             = c.apn_pass.c_str();
+        d.emergencyPhone      = c.emergency_phone.c_str();
+        d.smsEnabled          = c.sms_enabled;
+        d.accidentSensitivity = c.sensitivity;
+        d.rolloverAngleDeg    = c.rollover_angle;
+        d.wifiSsid            = c.wifi_ssid.c_str();
+        d.wifiPass            = c.wifi_pass.c_str();
+        d.mqttBroker          = c.mqtt_broker.c_str();
+        d.mqttPort            = c.mqtt_port;
+        d.mqttUser            = c.mqtt_user.c_str();
+        d.mqttPass            = c.mqtt_pass.c_str();
+        d.deviceId            = c.device_id.c_str();
+        d.deviceKey           = c.device_key.c_str();
+        d.bindToken           = c.bind_token.c_str();
+        d.otaHmacKey          = c.ota_hmac_key.c_str();
+        d.startupMode         = (c.startup_mode <= 2) ? static_cast<domain::StartupMode>(c.startup_mode) : domain::StartupMode::Off;
+        d.lastRelayState      = c.last_relay_state;
+        d.pulseEnabled        = c.pulse_enabled;
+        d.pulseWidthMs        = c.pulse_width_ms;
+        d.sledOnline          = c.sled_online;
         return d;
     }
 
@@ -94,6 +98,10 @@ private:
         c.apn              = d.apn.c_str();
         c.apn_user         = d.apnUser.c_str();
         c.apn_pass         = d.apnPass.c_str();
+        c.emergency_phone  = d.emergencyPhone.c_str();
+        c.sms_enabled      = d.smsEnabled;
+        c.sensitivity      = d.accidentSensitivity;
+        c.rollover_angle   = d.rolloverAngleDeg;
         c.wifi_ssid        = d.wifiSsid.c_str();
         c.wifi_pass        = d.wifiPass.c_str();
         c.mqtt_broker      = d.mqttBroker.c_str();
