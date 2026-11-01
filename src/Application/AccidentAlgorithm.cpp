@@ -8,6 +8,7 @@ constexpr float kPi = 3.14159265358979323846f;
 constexpr float kStaLtaRatio = 3.0f;       // STA/LTA anomaly ratio
 constexpr float kHighSpeedKmph = 50.0f;    // False positive suppression speed
 constexpr float kAccelLsbPerG = 16384.0f;  // MPU6050 default scale (+/-2g)
+constexpr float kHarshCorneringG = 0.45f;  // GTHBM lateral cornering threshold
 }
 
 AccidentAlgorithm::AccidentAlgorithm() {
@@ -84,6 +85,10 @@ AccidentSample AccidentAlgorithm::evaluate(int16_t ax, int16_t ay, int16_t az,
     const float ayf = ay / kAccelLsbPerG;
     const float azf = az / kAccelLsbPerG;
 
+    // Peak 3-axis G-force vector magnitude (GTCRA acce_squares_root)
+    sample.peak_g = std::sqrt(axf * axf + ayf * ayf + azf * azf);
+    sample.lateral_g = ayf;
+
     // Roll and Pitch angles in degrees
     const float roll = std::atan2(ayf, std::sqrt(axf * axf + azf * azf)) * 180.0f / kPi;
     const float pitch = std::atan2(-axf, std::sqrt(ayf * ayf + azf * azf)) * 180.0f / kPi;
@@ -95,12 +100,15 @@ AccidentSample AccidentAlgorithm::evaluate(int16_t ax, int16_t ay, int16_t az,
         sample.rollover_detected = true;
     }
 
-    // Longitudinal driving dynamics (assuming X-axis is vehicle travel direction)
+    // Longitudinal & lateral driving dynamics (GTHBM)
     sample.accel_g = axf;
     if (axf >= harshAccelG) {
         sample.harsh_accel_detected = true;
     } else if (axf <= harshBrakeG) {
         sample.harsh_brake_detected = true;
+    }
+    if (speedKmph >= 15.0f && std::fabs(ayf) >= kHarshCorneringG) {
+        sample.harsh_cornering_detected = true;
     }
 
     return sample;

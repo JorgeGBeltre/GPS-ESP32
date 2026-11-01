@@ -171,7 +171,8 @@ void setup() {
 
   static app::TelemetryService telemetry{
       relayService, connectivity, g_deviceRepo, g_timeProvider,
-      g_clock,      g_serializer, topics,       g_logger};
+      g_clock,      g_serializer, topics,       g_logger,
+      &g_sim7000};
   g_telemetry = &telemetry;
 
   static app::AccidentService accidentService{

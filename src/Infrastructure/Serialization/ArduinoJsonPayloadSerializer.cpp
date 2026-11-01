@@ -133,10 +133,14 @@ std::string ArduinoJsonPayloadSerializer::formatAccidentAlert(
     alertObj["rollover"] = event.rollover_detected;
     alertObj["harsh_accel"] = event.harsh_accel_detected;
     alertObj["harsh_brake"] = event.harsh_brake_detected;
+    alertObj["harsh_cornering"] = event.harsh_cornering_detected;
+    alertObj["tow"] = event.tow_detected;
     alertObj["impact_magnitude"] = event.impact_magnitude;
+    alertObj["peak_g"] = event.peak_g;
     alertObj["roll_angle"] = event.roll_angle;
     alertObj["pitch_angle"] = event.pitch_angle;
     alertObj["accel_g"] = event.accel_g;
+    alertObj["lateral_g"] = event.lateral_g;
 
     JsonObject gpsObj = details.createNestedObject("gps");
     gpsObj["valid"] = event.location.isValid;
@@ -145,7 +149,13 @@ std::string ArduinoJsonPayloadSerializer::formatAccidentAlert(
     gpsObj["speed_kmph"] = event.location.speed;
     gpsObj["altitude_m"] = event.location.altitude;
     gpsObj["course_deg"] = event.location.course;
+    gpsObj["hdop"] = event.location.hdop;
     gpsObj["satellites"] = event.location.satellites;
+    gpsObj["drift_filtered"] = event.location.driftFiltered;
+    gpsObj["tow_detected"] = event.location.towDetected;
+    gpsObj["virtual_ignition"] = event.location.virtualIgnition;
+    gpsObj["jamming_detected"] = event.location.jammingDetected;
+    gpsObj["roaming"] = event.location.roaming;
 
     String output;
     serializeJson(doc, output);
@@ -176,7 +186,13 @@ std::string ArduinoJsonPayloadSerializer::formatGpsTelemetry(
     gpsObj["speed_kmph"] = gps.speed;
     gpsObj["altitude_m"] = gps.altitude;
     gpsObj["course_deg"] = gps.course;
+    gpsObj["hdop"] = gps.hdop;
     gpsObj["satellites"] = gps.satellites;
+    gpsObj["drift_filtered"] = gps.driftFiltered;
+    gpsObj["tow_detected"] = gps.towDetected;
+    gpsObj["virtual_ignition"] = gps.virtualIgnition;
+    gpsObj["jamming_detected"] = gps.jammingDetected;
+    gpsObj["roaming"] = gps.roaming;
 
     String output;
     serializeJson(doc, output);

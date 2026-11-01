@@ -144,9 +144,21 @@ void RelayFirmwareController::tick() {
         }
     }
 
-    // 2. GPS + Detección de Accidentes (operan en modo Offline-First y reportan por SMS/GPRS si no hay Wi-Fi)
+    // 2. GPS + Detección de Accidentes + Corte Seguro por Velocidad (GTDOS)
     if (gpsProvider_) {
         gpsProvider_->update();
+        std::string safeCutoffDev;
+        if (relays_.evaluatePendingSpeedSafeCutoff(gpsProvider_->currentSpeedKmph(), now, safeCutoffDev)) {
+            log_.info("[GTDOS] Corte seguro ejecutado al descender la velocidad en " + safeCutoffDev);
+            if (onLocalStateChangeCb_) {
+                onLocalStateChangeCb_();
+            }
+            if (connectivity_.isOnline()) {
+                telemetry_.publishEvent("SPEED_SAFE_CUTOFF_EXECUTED",
+                                        "Corte de relé ejecutado tras descenso a velocidad segura", "off");
+                telemetry_.publishRelayState(safeCutoffDev);
+            }
+        }
     }
     if (accidentService_) {
         accidentService_->process();
@@ -280,8 +292,14 @@ void RelayFirmwareController::handleIncomingMessage(const std::string& topic, co
                 relays_.setDesiredState(r.deviceId, true);
                 relays_.applyDesiredState(r.deviceId, now);
             } else if (turnOff) {
-                relays_.setDesiredState(r.deviceId, false);
-                relays_.applyDesiredState(r.deviceId, now);
+                float speedKmh = gpsProvider_ ? gpsProvider_->currentSpeedKmph() : 0.0f;
+                bool deferred = false;
+                relays_.requestSpeedSafeCutoff(r.deviceId, speedKmh, now, deferred);
+                if (deferred) {
+                    telemetry_.publishEvent("SPEED_SAFE_CUTOFF_DEFERRED",
+                                            "Corte diferido hasta velocidad <= limite seguro (GTDOS)", "on");
+                    return;
+                }
             } else if (doToggle) {
                 relays_.toggle(r.deviceId, now);
             }
@@ -345,6 +363,20 @@ void RelayFirmwareController::processCommand(const std::string& cmd) {
         telemetry_.publishGpsTelemetry();
     } else if (cmd == "diagnose_gps") {
         if (gpsProvider_) gpsProvider_->diagnose();
+    } else if (cmd.rfind("safe_cutoff:", 0) == 0) {
+        std::string sub = cmd.substr(12);
+        bool en = (sub == "on" || sub == "1" || sub == "true");
+        relays_.setSpeedSafeCutoffConfig(en, relays_.getSafeCutoffSpeedKmh());
+        telemetry_.publishEvent("SAFE_CUTOFF_CONFIG",
+                                "Corte seguro por velocidad (GTDOS) actualizado",
+                                en ? "on" : "off");
+    } else if (cmd.rfind("safe_speed:", 0) == 0) {
+        float spd = std::strtof(cmd.substr(11).c_str(), nullptr);
+        if (spd >= 0.0f && spd <= 150.0f) {
+            relays_.setSpeedSafeCutoffConfig(relays_.isSpeedSafeCutoffEnabled(), spd);
+            telemetry_.publishEvent("SAFE_SPEED_CONFIG",
+                                    "Velocidad máxima de corte seguro actualizada a " + std::to_string(static_cast<int>(spd)) + " km/h");
+        }
     } else if (cmd.rfind("startup:", 0) == 0) {
         std::string modeStr = cmd.substr(8);
         auto mode = domain::startupModeFromString(modeStr);
@@ -388,10 +420,16 @@ void RelayFirmwareController::processCommand(const std::string& cmd) {
             }
         } else if (subcmd == "off" || subcmd == "0" || subcmd == "false") {
             for (const auto& r : relays_.getAllStates()) {
-                relays_.setDesiredState(r.deviceId, false);
-                relays_.applyDesiredState(r.deviceId, now);
-                if (onLocalStateChangeCb_) onLocalStateChangeCb_();
-                telemetry_.publishRelayState(r.deviceId);
+                float speedKmh = gpsProvider_ ? gpsProvider_->currentSpeedKmph() : 0.0f;
+                bool deferred = false;
+                relays_.requestSpeedSafeCutoff(r.deviceId, speedKmh, now, deferred);
+                if (deferred) {
+                    telemetry_.publishEvent("SPEED_SAFE_CUTOFF_DEFERRED",
+                                            "Corte diferido hasta velocidad <= limite seguro (GTDOS)", "on");
+                } else {
+                    if (onLocalStateChangeCb_) onLocalStateChangeCb_();
+                    telemetry_.publishRelayState(r.deviceId);
+                }
                 break;
             }
         } else if (subcmd == "toggle") {

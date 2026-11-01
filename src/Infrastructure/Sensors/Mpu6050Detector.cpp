@@ -56,23 +56,28 @@ bool Mpu6050Detector::check(domain::AccidentEvent& out, float currentSpeedKmph) 
     if (!sample.evaluated) return false;
 
     if (sample.impact_detected || sample.rollover_detected ||
-        sample.harsh_accel_detected || sample.harsh_brake_detected) {
+        sample.harsh_accel_detected || sample.harsh_brake_detected ||
+        sample.harsh_cornering_detected) {
 
         if (now - lastEventMs_ >= cooldownMs_) {
             lastEventMs_ = now;
 
-            out.impact_detected      = sample.impact_detected;
-            out.rollover_detected    = sample.rollover_detected;
-            out.harsh_accel_detected = sample.harsh_accel_detected;
-            out.harsh_brake_detected = sample.harsh_brake_detected;
-            out.impact_magnitude     = sample.impact_magnitude;
-            out.roll_angle           = sample.roll_angle;
-            out.pitch_angle          = sample.pitch_angle;
-            out.accel_g              = sample.accel_g;
-            out.detection_time       = now;
+            out.impact_detected          = sample.impact_detected;
+            out.rollover_detected        = sample.rollover_detected;
+            out.harsh_accel_detected     = sample.harsh_accel_detected;
+            out.harsh_brake_detected     = sample.harsh_brake_detected;
+            out.harsh_cornering_detected = sample.harsh_cornering_detected;
+            out.impact_magnitude         = sample.impact_magnitude;
+            out.peak_g                   = sample.peak_g;
+            out.roll_angle               = sample.roll_angle;
+            out.pitch_angle              = sample.pitch_angle;
+            out.accel_g                  = sample.accel_g;
+            out.lateral_g                = sample.lateral_g;
+            out.detection_time           = now;
 
             if (sample.impact_detected) {
-                Serial.printf("[MPU6050] IMPACTO VALIDADO POR STA/LTA! Magnitud: %.1f\n", sample.impact_magnitude);
+                Serial.printf("[MPU6050] IMPACTO VALIDADO POR STA/LTA! Magnitud: %.1f (%.2fg)\n",
+                              sample.impact_magnitude, sample.peak_g);
             }
             if (sample.rollover_detected) {
                 Serial.printf("[MPU6050] VUELCO (ROLLOVER) DETECTADO! Roll: %.1f deg, Pitch: %.1f deg\n",
@@ -83,6 +88,9 @@ bool Mpu6050Detector::check(domain::AccidentEvent& out, float currentSpeedKmph) 
             }
             if (sample.harsh_brake_detected) {
                 Serial.printf("[MPU6050] FRENADA BRUSCA! Aceleracion: %.2fg\n", sample.accel_g);
+            }
+            if (sample.harsh_cornering_detected) {
+                Serial.printf("[MPU6050] GIRO BRUSCO (GTHBM)! Lateral: %.2fg\n", sample.lateral_g);
             }
             return true;
         } else {

@@ -101,6 +101,9 @@ The firmware combines high-frequency GPS positioning (`TinyGPSPlus`), 6-axis ine
 | **Compatible SoftAP (`GPS-<ChipID>`)** | Stage 2 captive portal triggered by a 2nd `5.0 s` long press, preserving the `GPS-<ChipID>` SSID and `12345678` passphrase |
 | **Local LAN HTTP & mDNS** | HTTP server on port `8081` (`/zeroconf/*`) + `_ewelink._tcp` mDNS discovery supporting plain JSON and `AES-128-CBC` encrypted payloads |
 | **GNSS + LTE (SIM7000G) & MPU6050** | Satellite positioning, impact/rollover/harsh-dynamics detection, and redundant alerts via MQTT 5.0 and SMS |
+| **Speed-Safe Immobilizer Cutoff (`GTDOS` / `GTGDO`)** | Defers remote relay cutoff commands (`requestSpeedSafeCutoff`, `evaluatePendingSpeedSafeCutoff`) when vehicle GNSS speed exceeds `safeCutoffSpeedKmh_` (`20.0 km/h` default) and executes the cutoff automatically once speed drops safely |
+| **Static Drift Filter, Tow & Harsh Cornering (`GTRDF` / `GTTOW` / `GTHBM`)** | Stationary coordinate pinning (`30 m` radius at `< 3.0 km/h`), parked tow detection (`>= 100 m`), virtual ignition (`GTVVS`/`GTAVS`), and lateral harsh cornering (`>= 0.45g` at `>= 15 km/h`) |
+| **MCC/MNC Auto-APN & Jamming/Roaming Detection (`GTJDC` / `GTRMD`)** | Auto-resolves carrier APN from `AT+CIMI` (IMSI MCC/MNC table) when unconfigured and monitors `AT+CSQ` + `AT+CREG?` for cellular RF jamming and roaming |
 | **Native MQTT 5.0 + Secure OTA** | Powered by `ESP32_MQTTv5` and `MQTTOTAv5` with non-blocking reconnection and `SHA-256` / `HMAC-SHA256` verification |
 
 ---
@@ -125,6 +128,9 @@ The firmware combines high-frequency GPS positioning (`TinyGPSPlus`), 6-axis ine
   - `isPulseEnabled()`, `getPulseWidthMs()`, `isPulseActive()`
   - `setStartupMode()`, `getStartupMode()`
   - `onRelayHardwareTransition()`
+  - `setSpeedSafeCutoffConfig()`, `requestSpeedSafeCutoff()`, `evaluatePendingSpeedSafeCutoff()` (`GTDOS` / `GTGDO` speed-safe immobilizer relay cutoff deferral when vehicle GNSS speed `> safeCutoffSpeedKmh_`).
+- `AccidentAlgorithm` ([`AccidentAlgorithm.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS-ESP32/src/Application/AccidentAlgorithm.cpp)):
+  - Added 3-axis `peak_g`, `lateral_g`, and `harsh_cornering_detected` (`GTHBM` lateral cornering evaluation).
 - `TimerSchedulerService` ([`TimerSchedulerService.h`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS-ESP32/src/Application/Services/TimerSchedulerService.h), [`TimerSchedulerService.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS-ESP32/src/Application/Services/TimerSchedulerService.cpp)):
   - `loadFromStorage()`
   - `saveToStorage()`
@@ -162,6 +168,8 @@ The firmware combines high-frequency GPS positioning (`TinyGPSPlus`), 6-axis ine
   - `runPairingWorkflow()` in [`main.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS-ESP32/src/Presentation/main.cpp).
 - Local LAN Zeroconf Server ([`LanZeroconfServer.h`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS-ESP32/src/Infrastructure/Net/LanZeroconfServer.h), [`LanZeroconfServer.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS-ESP32/src/Infrastructure/Net/LanZeroconfServer.cpp)):
   - `loop()`, `notifyMdnsStateChange()`, `startServer()`, `stopServer()`, `registerEndpoint()`, `dispatchZeroconf()`.
+- `Sim7000Modem` ([`Sim7000Modem.h`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS-ESP32/src/Infrastructure/Modem/Sim7000Modem.h), [`Sim7000Modem.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS-ESP32/src/Infrastructure/Modem/Sim7000Modem.cpp)):
+  - `autoResolveCarrierApn()` (MCC/MNC IMSI carrier APN lookup), `applyDriftAndTowFilter()` (`GTRDF` static coordinate pinning + `GTTOW` parked tow alarm), and `pollCellularHealth()` (`GTJDC` RF jamming + `GTRMD` roaming detection).
 
 ---
 

@@ -10,11 +10,14 @@ struct AccidentSample {
     bool rollover_detected = false;
     bool harsh_accel_detected = false;
     bool harsh_brake_detected = false;
+    bool harsh_cornering_detected = false;
 
     float impact_magnitude = 0.0f;
+    float peak_g = 0.0f;
     float roll_angle = 0.0f;
     float pitch_angle = 0.0f;
     float accel_g = 0.0f;
+    float lateral_g = 0.0f;
 };
 
 class AccidentAlgorithm {

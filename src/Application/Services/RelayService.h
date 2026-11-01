@@ -49,6 +49,23 @@ public:
     bool toggle(const std::string& deviceId, unsigned long nowMs = 0);
     void toggleAll(unsigned long nowMs = 0);
 
+    // Speed-Safe Immobilizer Cutoff (GTDOS / GTGDO): defers remote OFF cutoff if
+    // vehicle GNSS speed exceeds safeCutoffSpeedKmh_ until speed drops safely.
+    void setSpeedSafeCutoffConfig(bool enabled, float maxSafeSpeedKmh = 20.0f) {
+        speedSafeCutoffEnabled_ = enabled;
+        if (maxSafeSpeedKmh >= 0.0f) safeCutoffSpeedKmh_ = maxSafeSpeedKmh;
+    }
+    bool isSpeedSafeCutoffEnabled() const { return speedSafeCutoffEnabled_; }
+    float getSafeCutoffSpeedKmh() const { return safeCutoffSpeedKmh_; }
+    bool hasPendingSpeedSafeCutoff() const { return pendingSpeedSafeCutoff_; }
+    bool requestSpeedSafeCutoff(const std::string& deviceId,
+                                float currentSpeedKmph,
+                                unsigned long nowMs,
+                                bool& outDeferred);
+    bool evaluatePendingSpeedSafeCutoff(float currentSpeedKmph,
+                                        unsigned long nowMs,
+                                        std::string& outExecutedDeviceId);
+
     // Guardado diferido en NVS (150 ms tras última conmutación cuando StartupMode::Stay)
     bool flushDeferredSave(unsigned long nowMs);
     bool hasPendingDeferredSave() const { return pendingDeferredSave_; }
@@ -90,6 +107,11 @@ private:
     bool pulseArmed_ = false;
     unsigned long pulseStartMs_ = 0;
     std::string pulseTargetDeviceId_;
+
+    bool speedSafeCutoffEnabled_ = true;
+    float safeCutoffSpeedKmh_ = 20.0f;
+    bool pendingSpeedSafeCutoff_ = false;
+    std::string pendingCutoffDeviceId_;
 };
 
 }

@@ -63,8 +63,52 @@ bool RelayService::setDesiredState(const std::string& deviceId, bool desired) {
     auto it = relays_.find(deviceId);
     if (it == relays_.end()) return false;
 
+    if (desired && pendingSpeedSafeCutoff_ && pendingCutoffDeviceId_ == deviceId) {
+        pendingSpeedSafeCutoff_ = false;
+        pendingCutoffDeviceId_.clear();
+    }
     it->second.state.desiredState = desired;
     return true;
+}
+
+bool RelayService::requestSpeedSafeCutoff(const std::string& deviceId,
+                                          float currentSpeedKmph,
+                                          unsigned long nowMs,
+                                          bool& outDeferred) {
+    outDeferred = false;
+    auto it = relays_.find(deviceId);
+    if (it == relays_.end()) return false;
+
+    if (speedSafeCutoffEnabled_ && currentSpeedKmph > safeCutoffSpeedKmh_) {
+        pendingSpeedSafeCutoff_ = true;
+        pendingCutoffDeviceId_ = deviceId;
+        outDeferred = true;
+        log_.warn("[RELAY] Corte diferido por velocidad segura (GTDOS): vel=" +
+                  std::to_string(static_cast<int>(currentSpeedKmph)) + " km/h > " +
+                  std::to_string(static_cast<int>(safeCutoffSpeedKmh_)) + " km/h");
+        return false;
+    }
+
+    pendingSpeedSafeCutoff_ = false;
+    pendingCutoffDeviceId_.clear();
+    setDesiredState(deviceId, false);
+    return applyDesiredState(deviceId, nowMs);
+}
+
+bool RelayService::evaluatePendingSpeedSafeCutoff(float currentSpeedKmph,
+                                                  unsigned long nowMs,
+                                                  std::string& outExecutedDeviceId) {
+    if (!pendingSpeedSafeCutoff_ || pendingCutoffDeviceId_.empty()) {
+        return false;
+    }
+    if (!speedSafeCutoffEnabled_ || currentSpeedKmph <= safeCutoffSpeedKmh_) {
+        outExecutedDeviceId = pendingCutoffDeviceId_;
+        pendingSpeedSafeCutoff_ = false;
+        pendingCutoffDeviceId_.clear();
+        setDesiredState(outExecutedDeviceId, false);
+        return applyDesiredState(outExecutedDeviceId, nowMs);
+    }
+    return false;
 }
 
 void RelayService::onRelayHardwareTransition(const std::string& deviceId, bool newState, unsigned long nowMs) {

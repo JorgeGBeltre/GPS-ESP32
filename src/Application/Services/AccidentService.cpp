@@ -9,8 +9,11 @@ void AccidentService::process() {
         return;
     }
 
-    // Attach latest GPS fix
+    // Attach latest GPS fix and propagate parked Tow Detection (GTTOW)
     gps_.readData(event.location);
+    if (event.location.towDetected) {
+        event.tow_detected = true;
+    }
 
     log_.warn("[ALERT] " + event.alertType() + " detectado! Lat: " +
               std::to_string(event.location.latitude) + ", Lon: " +

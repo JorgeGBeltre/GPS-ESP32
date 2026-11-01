@@ -2,6 +2,35 @@
 
 namespace relay::infra {
 
+namespace {
+struct CarrierApnEntry {
+    const char* mccMncPrefix;
+    const char* apn;
+};
+
+constexpr CarrierApnEntry kCarrierApnTable[] = {
+    {"37001", "internet.orange.com.do"},
+    {"37002", "internet.claro.com.do"},
+    {"37003", "avircom.net"},
+    {"37004", "data.viva.com.do"},
+    {"334020", "internet.itelcel.com"},
+    {"33403", "internet.movistar.mx"},
+    {"732101", "internet.comcel.com.co"},
+    {"732103", "web.colombiamovil.com.co"},
+    {"732123", "internet.movistar.com.co"},
+    {"71606", "movistar.pe"},
+    {"71610", "claro.pe"},
+    {"73001", "bam.entelpcs.cl"},
+    {"73002", "wap.tmovil.cl"},
+    {"72207", "wap.gprs.unifon.com.ar"},
+    {"722310", "igprs.claro.com.ar"},
+    {"310260", "fast.t-mobile.com"},
+    {"310410", "broadband"},
+    {"21401", "airtelnet.es"},
+    {"21407", "movistar.es"},
+};
+} // namespace
+
 Sim7000Modem::Sim7000Modem(HardwareSerial& serial,
                            uint8_t rxPin,
                            uint8_t txPin,
@@ -100,12 +129,12 @@ void Sim7000Modem::syncFromNmea() {
 
     if (nmeaGps_.location.isValid()) {
         cachedLocation_.isValid = true;
-        cachedLocation_.latitude = nmeaGps_.location.lat();
-        cachedLocation_.longitude = nmeaGps_.location.lng();
         cachedLocation_.altitude = nmeaGps_.altitude.isValid() ? static_cast<float>(nmeaGps_.altitude.meters()) : 0.0f;
         cachedLocation_.speed = nmeaGps_.speed.isValid() ? static_cast<float>(nmeaGps_.speed.kmph()) : 0.0f;
         cachedLocation_.course = nmeaGps_.course.isValid() ? static_cast<float>(nmeaGps_.course.deg()) : 0.0f;
         cachedLocation_.satellites = (satellitesUsed_ > 0) ? satellitesUsed_ : satellitesInView_;
+        float hdop = nmeaGps_.hdop.isValid() ? static_cast<float>(nmeaGps_.hdop.hdop()) : 99.9f;
+        applyDriftAndTowFilter(nmeaGps_.location.lat(), nmeaGps_.location.lng(), cachedLocation_.speed, hdop);
     } else {
         cachedLocation_.isValid = false;
         cachedLocation_.latitude = 0.0;
@@ -115,6 +144,82 @@ void Sim7000Modem::syncFromNmea() {
         cachedLocation_.course = 0.0f;
         cachedLocation_.satellites = (satellitesInView_ > 0) ? satellitesInView_ : satellitesUsed_;
     }
+}
+
+std::string Sim7000Modem::autoResolveCarrierApn() {
+    String imsiResp = sendATCommandWithReply("AT+CIMI", 1200);
+    for (size_t i = 0; i < sizeof(kCarrierApnTable) / sizeof(kCarrierApnTable[0]); ++i) {
+        if (imsiResp.indexOf(kCarrierApnTable[i].mccMncPrefix) != -1) {
+            return std::string(kCarrierApnTable[i].apn);
+        }
+    }
+    return "";
+}
+
+void Sim7000Modem::applyDriftAndTowFilter(double rawLat, double rawLon, float speedKmh, float hdop) {
+    cachedLocation_.hdop = hdop;
+    cachedLocation_.virtualIgnition = (speedKmh >= 3.0f);
+    cachedLocation_.jammingDetected = jammingDetected_;
+    cachedLocation_.roaming = roaming_;
+    cachedLocation_.driftFiltered = false;
+    cachedLocation_.towDetected = false;
+
+    if (!hasAnchor_) {
+        hasAnchor_ = true;
+        anchorLat_ = rawLat;
+        anchorLon_ = rawLon;
+    }
+
+    double distFromAnchorM = TinyGPSPlus::distanceBetween(anchorLat_, anchorLon_, rawLat, rawLon);
+
+    // Static GPS Drift Filter (GTRDF): pin stationary coordinates within 30 m
+    if (speedKmh < 3.0f && distFromAnchorM <= 30.0) {
+        cachedLocation_.latitude = anchorLat_;
+        cachedLocation_.longitude = anchorLon_;
+        cachedLocation_.driftFiltered = true;
+    } else {
+        cachedLocation_.latitude = rawLat;
+        cachedLocation_.longitude = rawLon;
+        // Parked Tow Detection (GTTOW): displacement >= 100 m at low/parked speed
+        if (speedKmh < 8.0f && distFromAnchorM >= 100.0) {
+            cachedLocation_.towDetected = true;
+        }
+        if (speedKmh >= 5.0f || distFromAnchorM > 30.0) {
+            anchorLat_ = rawLat;
+            anchorLon_ = rawLon;
+        }
+    }
+}
+
+void Sim7000Modem::pollCellularHealth() {
+    if (!isReady_ || millis() - lastCellCheckMs_ < 30000) return;
+    lastCellCheckMs_ = millis();
+
+    String csqResp = sendATCommandWithReply("AT+CSQ", 800);
+    int csq = 0;
+    int idx = csqResp.indexOf("+CSQ:");
+    if (idx != -1) {
+        int comma = csqResp.indexOf(",", idx);
+        if (comma > idx) {
+            csq = csqResp.substring(idx + 5, comma).toInt();
+        }
+    }
+
+    String cregResp = sendATCommandWithReply("AT+CREG?", 800);
+    bool registeredHome = (cregResp.indexOf(",1") != -1);
+    bool registeredRoaming = (cregResp.indexOf(",5") != -1);
+    roaming_ = registeredRoaming;
+
+    if (lastCsq_ >= 12 && (csq == 0 || csq == 99) && !registeredHome && !registeredRoaming) {
+        jammingDetected_ = true;
+        Serial.println("[SIM7000] ALERTA: Posible interferencia RF celular detectada (GTJDC).");
+    } else if ((registeredHome || registeredRoaming) && csq >= 5 && csq != 99) {
+        jammingDetected_ = false;
+    }
+    if (csq != 99) lastCsq_ = csq;
+
+    cachedLocation_.jammingDetected = jammingDetected_;
+    cachedLocation_.roaming = roaming_;
 }
 
 bool Sim7000Modem::probeAtOrNmea(uint32_t baud, uint8_t rxPin, uint8_t txPin, int attempts, unsigned long timeoutMs) {
@@ -263,7 +368,10 @@ void Sim7000Modem::configureGnssAt() {
     sendATCommand("AT+CMGF=1", "OK", 500);     // Modo SMS texto
     sendATCommand("AT+CSCS=\"GSM\"", "OK", 500);
 
-    // Configurar contexto PDP y APN celular si fue aprovisionado
+    // Configurar contexto PDP y APN celular (con auto-resolución MCC/MNC apn.bin si está vacío)
+    if (apn_.empty()) {
+        apn_ = autoResolveCarrierApn();
+    }
     if (!apn_.empty()) {
         String cgdcont = String("AT+CGDCONT=1,\"IP\",\"") + apn_.c_str() + "\"";
         sendATCommand(cgdcont, "OK", 1000);
@@ -534,12 +642,14 @@ void Sim7000Modem::parseGnssInf(const String& line) {
     if (fixStatus == 1 && tokens.size() >= 8 && !tokens[3].isEmpty() && !tokens[4].isEmpty()) {
         cachedLocation_.isValid = true;
         if (!tokens[2].isEmpty()) cachedLocation_.timestamp = tokens[2].c_str();
-        cachedLocation_.latitude = tokens[3].toDouble();
-        cachedLocation_.longitude = tokens[4].toDouble();
+        double rawLat = tokens[3].toDouble();
+        double rawLon = tokens[4].toDouble();
         cachedLocation_.altitude = tokens[5].toFloat();
         cachedLocation_.speed = tokens[6].toFloat();
         cachedLocation_.course = tokens[7].toFloat();
         cachedLocation_.satellites = (satellitesUsed_ > 0) ? satellitesUsed_ : satellitesInView_;
+        float hdop = (tokens.size() > 10 && !tokens[10].isEmpty()) ? tokens[10].toFloat() : 99.9f;
+        applyDriftAndTowFilter(rawLat, rawLon, cachedLocation_.speed, hdop);
     } else {
         cachedLocation_.isValid = false;
         cachedLocation_.latitude = 0.0;
@@ -549,6 +659,7 @@ void Sim7000Modem::parseGnssInf(const String& line) {
         cachedLocation_.course = 0.0f;
         cachedLocation_.satellites = satellitesInView_;
     }
+    pollCellularHealth();
 }
 
 void Sim7000Modem::readData(domain::GpsLocation& out) {

@@ -71,6 +71,9 @@ private:
     String sendATCommandWithReply(const String& cmd, unsigned long timeoutMs = 2000);
     bool probeAtOrNmea(uint32_t baud, uint8_t rxPin, uint8_t txPin, int attempts, unsigned long timeoutMs);
     bool listenForNmea(uint32_t baud, uint8_t rxPin, uint8_t txPin, unsigned long durationMs);
+    std::string autoResolveCarrierApn();
+    void applyDriftAndTowFilter(double rawLat, double rawLon, float speedKmh, float hdop);
+    void pollCellularHealth();
     void configureGnssAt();
     void queryGnss();
     void parseGnssInf(const String& line);
@@ -101,8 +104,15 @@ private:
     unsigned long   lastGnssQueryMs_ = 0;
     unsigned long   lastReadyCheckMs_ = 0;
     unsigned long   lastWarningMs_ = 0;
+    unsigned long   lastCellCheckMs_ = 0;
 
     domain::GpsLocation cachedLocation_;
+    bool                hasAnchor_ = false;
+    double              anchorLat_ = 0.0;
+    double              anchorLon_ = 0.0;
+    int                 lastCsq_ = 0;
+    bool                jammingDetected_ = false;
+    bool                roaming_ = false;
     int                 satellitesInView_ = 0;
     int                 satellitesUsed_ = 0;
     int                 gsvSatsGps_ = 0;
