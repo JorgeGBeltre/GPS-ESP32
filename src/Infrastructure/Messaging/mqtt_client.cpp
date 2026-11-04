@@ -32,7 +32,7 @@ void initMQTT(const char* server, uint16_t port,
     g_apiKey = apiKey;
     g_firmwareVersion = firmwareVersion;
 
-    configureNetworkClient(rootCa);
+    configureNetworkClient(rootCa, port);
 
     Serial.printf("[MQTT5] Inicializando broker %s:%d con cliente %s...\n",
                   server, port, clientId);

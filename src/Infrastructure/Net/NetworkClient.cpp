@@ -13,14 +13,20 @@ WiFiClient& getActiveNetworkClient() {
     return g_useTls ? static_cast<WiFiClient&>(g_secureClient) : g_plainClient;
 }
 
-void configureNetworkClient(const char* rootCa) {
+void configureNetworkClient(const char* rootCa, uint16_t port) {
+    if (port == 1883) {
+        g_useTls = false;
+        Serial.println("[NET] Modo TCP en claro (puerto 1883)");
+        return;
+    }
     if (rootCa && strstr(rootCa, "YOUR_SSL_CERTIFICATE_HERE") == nullptr && strlen(rootCa) > 50) {
         g_useTls = true;
         g_secureClient.setCACert(rootCa);
         Serial.println("[NET] TLS Root CA configurado correctamente");
     } else {
-        g_useTls = false;
-        Serial.println("[NET] Modo TCP en claro (puerto 1883 / desarrollo)");
+        g_useTls = true;
+        g_secureClient.setInsecure();
+        Serial.println("[NET] TLS en modo Insecure (certificado autofirmado / placeholder)");
     }
 }
 

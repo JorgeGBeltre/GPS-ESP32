@@ -24,12 +24,38 @@
 #define CHAR_SAVE_UUID        "aaaaaaaa-bbbb-cccc-dddd-000000000099"
 
 static bool _configSaved = false;
+static std::string _rxFrameBuffer;
+static unsigned long _lastRxChunkMs = 0;
+
+static bool isCompleteJsonObject(const std::string& s) {
+    size_t first = s.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos || s[first] != '{') return false;
+    int depth = 0;
+    bool inStr = false;
+    bool esc = false;
+    for (size_t i = first; i < s.size(); ++i) {
+        char ch = s[i];
+        if (inStr) {
+            if (esc) esc = false;
+            else if (ch == '\\') esc = true;
+            else if (ch == '"') inStr = false;
+        } else {
+            if (ch == '"') inStr = true;
+            else if (ch == '{') ++depth;
+            else if (ch == '}') {
+                --depth;
+                if (depth == 0) return true;
+            }
+        }
+    }
+    return false;
+}
 
 static bool parseJsonCredentials(const std::string& raw) {
     size_t first = raw.find_first_not_of(" \t\r\n");
     if (first == std::string::npos || raw[first] != '{') return false;
 
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<1024> doc;
     DeserializationError error = deserializeJson(doc, raw.substr(first));
     if (error) {
         Serial.printf("[BLE] Error parseando trama JSON: %s\n", error.c_str());
@@ -297,6 +323,31 @@ public:
 
     void onWrite(NimBLECharacteristic* c) override {
         std::string val = c->getValue();
+        if (val.empty()) return;
+
+        unsigned long now = millis();
+        if (!_rxFrameBuffer.empty() && (now - _lastRxChunkMs > 4000 || _rxFrameBuffer.size() + val.size() > 2048)) {
+            _rxFrameBuffer.clear();
+        }
+        _lastRxChunkMs = now;
+
+        size_t firstNonWs = val.find_first_not_of(" \t\r\n");
+        bool startsJson = (firstNonWs != std::string::npos && val[firstNonWs] == '{');
+
+        if (_rxFrameBuffer.empty() && startsJson && !isCompleteJsonObject(val)) {
+            _rxFrameBuffer = val;
+            return;
+        }
+
+        if (!_rxFrameBuffer.empty()) {
+            _rxFrameBuffer += val;
+            if (!isCompleteJsonObject(_rxFrameBuffer)) {
+                return;
+            }
+            val = _rxFrameBuffer;
+            _rxFrameBuffer.clear();
+        }
+
         if (parseFrame(val)) {
             saveConfig();
             _configSaved = true;
@@ -323,6 +374,7 @@ QuickPairingResult runQuickPairing(unsigned long timeoutMs,
     Serial.println("[PAIRING] - Pulsación corta:      Salir de modo emparejamiento");
     Serial.println("[PAIRING] =========================================================");
     _configSaved = false;
+    _rxFrameBuffer.clear();
 
     if (indicator) {
         indicator->show(relay::domain::IndicatorStatus::QuickPairing);
