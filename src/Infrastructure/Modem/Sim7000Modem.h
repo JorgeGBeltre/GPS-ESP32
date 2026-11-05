@@ -66,6 +66,12 @@ public:
         if (enable) configureGnssAt();
     }
 
+    void probeCellularProvisioningState();
+    bool isSimPresent() const { return simPresent_; }
+    bool isApnAutoDetected() const { return apnAutoDetected_; }
+    bool isCellularConnected() const { return cellularConnected_; }
+    const std::string& resolvedApn() const { return resolvedApn_; }
+
 private:
     bool sendATCommand(const String& cmd, const String& expectedResponse, unsigned long timeoutMs = 2000);
     String sendATCommandWithReply(const String& cmd, unsigned long timeoutMs = 2000);
@@ -119,6 +125,10 @@ private:
     int                 gsvSatsGlonass_ = 0;
     int                 maxC_N0_ = 0;
     String              lastCgnsInfRaw_;
+    bool                simPresent_ = false;
+    bool                apnAutoDetected_ = false;
+    bool                cellularConnected_ = false;
+    std::string         resolvedApn_;
 };
 
 } // namespace relay::infra

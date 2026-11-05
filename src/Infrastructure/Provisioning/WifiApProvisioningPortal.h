@@ -5,8 +5,10 @@
 #include <WiFi.h>
 #include <WiFiManager.h>
 #include <cstdlib>
+#include <cstring>
 #include "Domain/Interfaces/IButtonHandler.h"
 #include "Domain/Interfaces/IIndicator.h"
+#include "Infrastructure/Config/config.h"
 #include "Infrastructure/Config/nvs_config.h"
 
 namespace relay::infra {
@@ -20,9 +22,9 @@ public:
 
         WiFiManager wifiManager;
         uint64_t chipID = ESP.getEfuseMac();
-        // Preserva íntegramente el SSID GPS-<ChipID> y contraseña "12345678"
-        String apSSID = "GPS-" + String((uint16_t)(chipID >> 32), DEC) +
-                        String((uint32_t)chipID, DEC);
+        char chipHex[16];
+        snprintf(chipHex, sizeof(chipHex), "%04X%08X", (uint16_t)(chipID >> 32), (uint32_t)chipID);
+        String apSSID = String("GPS-") + (config.device_id.length() > 0 ? config.device_id : String(chipHex));
         const char* apPassword = "12345678";
 
         Serial.printf("[PROVISION] Iniciando Compatible SoftAP: %s (Clave: %s)\n",
@@ -31,6 +33,10 @@ public:
         if (indicator) {
             indicator->show(domain::IndicatorStatus::CompatibleAp);
         }
+
+        WiFi.setAutoReconnect(false);
+        WiFi.disconnect(false, false);
+        delay(100);
 
         char portBuf[12];
         snprintf(portBuf, sizeof(portBuf), "%d", config.mqtt_port > 0 ? config.mqtt_port : 8883);
@@ -61,48 +67,99 @@ public:
             portalSaved = true;
         });
 
-        // Endpoints JSON de Compatible Pairing Mode (GET /device y POST /ap)
+        // Endpoints JSON de Compatible Pairing Mode (GET /device, GET /api/info, POST /ap, POST /api/wifi)
         wifiManager.setWebServerCallback([&]() {
             if (!wifiManager.server) return;
 
-            wifiManager.server->on("/device", HTTP_GET, [&]() {
-                char chipHex[16];
-                snprintf(chipHex, sizeof(chipHex), "%04X%08X", (uint16_t)(chipID >> 32), (uint32_t)chipID);
-                StaticJsonDocument<320> doc;
-                doc["deviceid"]        = config.device_id.length() > 0 ? config.device_id.c_str() : chipHex;
-                doc["apikey"]          = config.device_key.c_str();
-                doc["chipid"]          = chipHex;
-                doc["device_type"]     = "GPS-Relay";
-                doc["apn"]             = config.apn;
-                doc["emergency_phone"] = config.emergency_phone;
-                doc["accept"]          = "post";
+            auto sendDeviceInfo = [&]() {
+                const bool wifiConn = (WiFi.status() == WL_CONNECTED);
+                const bool cellConn = isCellularDataConnected();
+                const bool autoApn  = isCellularApnAutoDetected();
+                const char* credMode = resolveDeviceCredentialMode(wifiConn);
+                const bool adoptReady = (std::strcmp(credMode, "adopt_only") == 0);
+                const String effectiveApn = config.apn.length() > 0 ? config.apn : String(getCellularResolvedApn());
+
+                StaticJsonDocument<640> doc;
+                doc["deviceid"]              = config.device_id.length() > 0 ? config.device_id.c_str() : chipHex;
+                doc["device_id"]             = config.device_id.length() > 0 ? config.device_id.c_str() : chipHex;
+                doc["chipid"]                = chipHex;
+                doc["apikey"]                = config.device_key.c_str();
+                doc["device_key"]            = config.device_key.c_str();
+                doc["device_family"]         = "gps_esp32";
+                doc["device_code"]           = 2;
+                doc["device_type"]           = "GPS-Relay";
+                doc["model"]                 = "VESIS-GPS-ESP32";
+                doc["channel_count"]         = 1;
+                doc["version"]               = FIRMWARE_VERSION;
+                doc["config_state"]          = resolveDeviceConfigState(wifiConn, cellConn, false);
+                doc["credential_mode"]       = credMode;
+                doc["requires_wifi"]         = (std::strcmp(credMode, "wifi") == 0 || std::strcmp(credMode, "wifi_and_apn") == 0);
+                doc["requires_apn"]          = (std::strcmp(credMode, "apn") == 0 || std::strcmp(credMode, "wifi_and_apn") == 0);
+                doc["supports_wifi"]         = true;
+                doc["supports_apn"]          = true;
+                doc["sim_present"]           = isCellularSimPresent();
+                doc["apn_auto_detected"]     = autoApn;
+                doc["cellular_connected"]    = cellConn;
+                doc["adopt_ready"]           = adoptReady;
+                doc["apn"]                   = effectiveApn;
+                doc["emergency_phone"]       = config.emergency_phone;
+                doc["account_bound"]         = isAccountBound();
+                doc["has_wifi_credentials"]  = hasValidWifiCredentials();
+                doc["has_broker_credentials"]= hasValidBrokerCredentials();
+                doc["accept"]                = "post";
                 String out;
                 serializeJson(doc, out);
+                wifiManager.server->sendHeader("Connection", "close");
                 wifiManager.server->send(200, "application/json", out);
-            });
+            };
 
-            wifiManager.server->on("/ap", HTTP_POST, [&]() {
+            auto handleApPost = [&]() {
                 String body = wifiManager.server->arg("plain");
-                StaticJsonDocument<512> doc;
-                if (deserializeJson(doc, body) != DeserializationError::Ok ||
-                    (!doc.containsKey("ssid") && !doc.containsKey("wifi_ssid") && !doc.containsKey("apn"))) {
+                StaticJsonDocument<640> doc;
+                if (deserializeJson(doc, body) != DeserializationError::Ok) {
+                    wifiManager.server->sendHeader("Connection", "close");
                     wifiManager.server->send(400, "application/json", "{\"error\":400}");
                     return;
                 }
 
-                if (doc.containsKey("ssid")) config.wifi_ssid = doc["ssid"].as<String>();
-                else if (doc.containsKey("wifi_ssid")) config.wifi_ssid = doc["wifi_ssid"].as<String>();
+                String nextSsid = doc["ssid"] | (doc["wifi_ssid"] | "");
+                String nextApn  = doc["apn"] | "";
+                const bool hasBrokerBundle =
+                    doc.containsKey("server") || doc.containsKey("serverName") ||
+                    doc.containsKey("mqtt_broker") || doc.containsKey("apikey") ||
+                    doc.containsKey("mqtt_user") || doc.containsKey("bind_token") ||
+                    doc.containsKey("token");
+                const bool canAdoptWithoutCreds =
+                    hasBrokerBundle &&
+                    (isCellularApnAutoDetected() || isCellularDataConnected() ||
+                     config.apn.length() > 0 || hasValidWifiCredentials());
 
-                if (doc.containsKey("password")) config.wifi_pass = doc["password"].as<String>();
-                else if (doc.containsKey("pass")) config.wifi_pass = doc["pass"].as<String>();
-                else if (doc.containsKey("wifi_pass")) config.wifi_pass = doc["wifi_pass"].as<String>();
+                if (nextSsid.length() == 0 && nextApn.length() == 0 && !canAdoptWithoutCreds) {
+                    wifiManager.server->sendHeader("Connection", "close");
+                    wifiManager.server->send(400, "application/json", "{\"error\":400}");
+                    return;
+                }
 
-                if (doc.containsKey("apn")) config.apn = doc["apn"].as<String>();
+                if (nextSsid.length() > 0) {
+                    config.wifi_ssid = nextSsid;
+                    if (doc.containsKey("password")) config.wifi_pass = doc["password"].as<String>();
+                    else if (doc.containsKey("pass")) config.wifi_pass = doc["pass"].as<String>();
+                    else if (doc.containsKey("wifi_pass")) config.wifi_pass = doc["wifi_pass"].as<String>();
+                }
+
+                if (nextApn.length() > 0) {
+                    config.apn = nextApn;
+                }
                 if (doc.containsKey("apn_user")) config.apn_user = doc["apn_user"].as<String>();
                 if (doc.containsKey("apn_pass")) config.apn_pass = doc["apn_pass"].as<String>();
 
-                if (doc.containsKey("emergency_phone")) config.emergency_phone = doc["emergency_phone"].as<String>();
-                else if (doc.containsKey("phone")) config.emergency_phone = doc["phone"].as<String>();
+                if (doc.containsKey("emergency_phone")) {
+                    String ph = doc["emergency_phone"].as<String>();
+                    if (ph.length() > 0) config.emergency_phone = ph;
+                } else if (doc.containsKey("phone")) {
+                    String ph = doc["phone"].as<String>();
+                    if (ph.length() > 0) config.emergency_phone = ph;
+                }
 
                 if (doc.containsKey("sms_enabled")) config.sms_enabled = doc["sms_enabled"].as<bool>();
                 if (doc.containsKey("sensitivity")) config.sensitivity = doc["sensitivity"].as<int>();
@@ -123,6 +180,10 @@ public:
                 if (doc.containsKey("devicekey")) config.device_key = doc["devicekey"].as<String>();
                 if (doc.containsKey("bind_token")) config.bind_token = doc["bind_token"].as<String>();
                 else if (doc.containsKey("token")) config.bind_token = doc["token"].as<String>();
+
+                if (hasBrokerBundle) {
+                    config.account_bound = true;
+                }
 
                 if (doc.containsKey("startup")) {
                     String st = doc["startup"].as<String>();
@@ -146,10 +207,16 @@ public:
                     config.sled_online = (sl != "off" && sl != "0" && sl != "false");
                 }
 
+                wifiManager.server->sendHeader("Connection", "close");
                 wifiManager.server->send(200, "application/json", "{\"error\":0}");
                 jsonApSaved = true;
                 portalSaved = true;
-            });
+            };
+
+            wifiManager.server->on("/device", HTTP_GET, sendDeviceInfo);
+            wifiManager.server->on("/api/info", HTTP_GET, sendDeviceInfo);
+            wifiManager.server->on("/ap", HTTP_POST, handleApPost);
+            wifiManager.server->on("/api/wifi", HTTP_POST, handleApPost);
         });
 
         wifiManager.setConfigPortalBlocking(false);

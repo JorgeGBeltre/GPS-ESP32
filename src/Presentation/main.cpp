@@ -1,6 +1,7 @@
 #include "Infrastructure/Config/NvsConfigRepository.h"
 #include "Infrastructure/Config/config.h"
 #include <Arduino.h>
+#include <WiFi.h>
 
 #include "Application/Controllers/RelayFirmwareController.h"
 #include "Application/Messaging/MqttTopics.h"
@@ -69,7 +70,17 @@ static app::TimerSchedulerService *g_timerScheduler = nullptr;
 static app::RelayFirmwareController *g_controller = nullptr;
 static infra::LanZeroconfServer *g_lanServer = nullptr;
 
+static void executeFactoryUnlinkToQuickPairing() {
+  Serial.println("[UNLINK] Dispositivo desvinculado de la cuenta. Borrando credenciales y entrando en Quick Pairing...");
+  g_relay1.setState(false);
+  resetConfig();
+  WiFi.disconnect(true, true);
+  delay(200);
+  ESP.restart();
+}
+
 static void runPairingWorkflow(bool isInitialUnprovisionedBoot) {
+  g_sim7000.probeCellularProvisioningState();
   Serial.println(
       "[PAIRING] Entrando en Etapa 1: Quick Pairing (BLE + SmartConfig)...");
   QuickPairingResult res = g_blePortal.runInteractive(
@@ -165,6 +176,7 @@ void setup() {
 
   infra::initMQTT(broker, port, activeDeviceId.c_str(), apiKey, root_ca_pem,
                   FIRMWARE_VERSION);
+  infra::setMqttUnlinkVerifiedCallback(executeFactoryUnlinkToQuickPairing);
 
   static app::ConnectivityService connectivity{g_wifi, g_transport, g_logger};
   g_connectivity = &connectivity;
@@ -191,6 +203,7 @@ void setup() {
   static infra::LanZeroconfServer lanServer{
       relayService, telemetry,      timerScheduler, g_indicator,
       g_configRepo, activeDeviceId, deviceId1,      LAN_HTTP_PORT};
+  lanServer.setUnlinkCallback(executeFactoryUnlinkToQuickPairing);
   g_lanServer = &lanServer;
 
   auto provisioningCallback = []() { runPairingWorkflow(false); };

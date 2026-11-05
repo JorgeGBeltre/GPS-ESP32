@@ -90,11 +90,12 @@ private:
         d.pulseEnabled        = c.pulse_enabled;
         d.pulseWidthMs        = c.pulse_width_ms;
         d.sledOnline          = c.sled_online;
+        d.accountBound        = c.account_bound;
         return d;
     }
 
     static AppConfig fromDomain(const domain::DeviceConfig& d) {
-        AppConfig c;
+        AppConfig c = ::config;
         c.apn              = d.apn.c_str();
         c.apn_user         = d.apnUser.c_str();
         c.apn_pass         = d.apnPass.c_str();
@@ -117,6 +118,7 @@ private:
         c.pulse_enabled    = d.pulseEnabled;
         c.pulse_width_ms   = d.pulseWidthMs;
         c.sled_online      = d.sledOnline;
+        c.account_bound    = d.accountBound;
         return c;
     }
 };

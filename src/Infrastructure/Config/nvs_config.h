@@ -31,12 +31,29 @@ struct AppConfig {
     bool     pulse_enabled    = false; // Modo pulso (Inching)
     uint32_t pulse_width_ms   = 500;   // Ancho de pulso en ms (500..36000000, paso 500)
     bool     sled_online      = true;  // Indicador LED de estado en línea (sledOnline)
+    bool     account_bound    = false; // Vinculación activa a cuenta de plataforma
+    String   last_wifi_error;          // Último error de conexión Wi-Fi
 };
 
 extern AppConfig config;
 
 void initConfig(const char* defaultDeviceId = nullptr);
 bool isProvisioned();
+bool isAccountBound();
+bool hasValidWifiCredentials();
+bool hasValidCellularCredentials();
+bool hasValidBrokerCredentials();
+void computeUnlinkProofHex(const char* deviceKey, const char* chipId, char outHex[33]);
+bool verifyUnlinkProof(const char* deviceKey, const char* chipId, const char* providedHex);
+const char* resolveDeviceConfigState(bool wifiConnected, bool cellularConnected, bool mqttConnected);
+const char* resolveDeviceCredentialMode(bool wifiConnected);
+
+void setCellularProvisioningSnapshot(bool simPresent, bool apnAutoDetected, bool cellularConnected, const char* resolvedApn);
+bool isCellularSimPresent();
+bool isCellularApnAutoDetected();
+bool isCellularDataConnected();
+const char* getCellularResolvedApn();
+
 void saveConfig();
 void loadConfig();
 void resetConfig();

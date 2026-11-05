@@ -1,6 +1,8 @@
 #include "Infrastructure/Messaging/mqtt_client.h"
+#include "Infrastructure/Config/nvs_config.h"
 #include "Infrastructure/Net/NetworkClient.h"
 #include "Infrastructure/Ota/ota_manager.h"
+#include <ArduinoJson.h>
 
 ESP32_MQTTv5 mqtt;
 
@@ -14,6 +16,25 @@ static String g_firmwareVersion;
 
 static std::function<void(const String&, const String&)> g_messageSink;
 static std::function<void()> g_onConnectCallback;
+static std::function<void()> g_onUnlinkVerifiedCallback;
+
+static void tryVerifyReasonStringUnlink(const String& reason) {
+    int pos = reason.indexOf("ACCOUNT_UNLINKED:");
+    if (pos == -1) return;
+    String proof = reason.substring(pos + 17);
+    proof.trim();
+    if (proof.length() > 32) {
+        proof = proof.substring(0, 32);
+    }
+    if (verifyUnlinkProof(config.device_key.c_str(), g_clientId.c_str(), proof.c_str())) {
+        Serial.println("[MQTT5] Desvinculación de cuenta verificada criptográficamente (CONNACK/DISCONNECT).");
+        if (g_onUnlinkVerifiedCallback) {
+            g_onUnlinkVerifiedCallback();
+        }
+    } else {
+        Serial.println("[MQTT5] AVISO: Prueba ACCOUNT_UNLINKED inválida rechazada.");
+    }
+}
 
 void setMqttMessageSink(std::function<void(const String&, const String&)> sink) {
     g_messageSink = std::move(sink);
@@ -21,6 +42,10 @@ void setMqttMessageSink(std::function<void(const String&, const String&)> sink) 
 
 void setMqttConnectCallback(std::function<void()> cb) {
     g_onConnectCallback = std::move(cb);
+}
+
+void setMqttUnlinkVerifiedCallback(std::function<void()> cb) {
+    g_onUnlinkVerifiedCallback = std::move(cb);
 }
 
 void initMQTT(const char* server, uint16_t port,
@@ -47,8 +72,6 @@ void initMQTT(const char* server, uint16_t port,
     MQTTProperties willProps;
     willProps.setContentType("application/json");
     willProps.setWillDelay(5);
-    // El will va al status DEL DISPOSITIVO: con el "status" pelado, el aviso de caída de
-    // un equipo llegaba al tópico compartido por todos y el servidor no podía atribuirlo.
     String willTopic = "status/" + g_clientId;
     String willPayload = "{\"status\":\"offline\",\"device_id\":\"" + g_clientId + "\"}";
     mqtt.setWill(willTopic, willPayload, 1, true, &willProps);
@@ -57,6 +80,8 @@ void initMQTT(const char* server, uint16_t port,
         Serial.println("[MQTT5] ¡Conectado al broker exitosamente!");
 
         initOTA(g_clientId, g_firmwareVersion);
+        mqtt.subscribe("devices/" + g_clientId + "/unlink/command", 1);
+
         MQTTProperties reconnectWillProps;
         reconnectWillProps.setContentType("application/json");
         reconnectWillProps.setWillDelay(5);
@@ -71,14 +96,36 @@ void initMQTT(const char* server, uint16_t port,
 
     mqtt.onDisconnect([](MQTTReasonCode rc) {
         Serial.printf("[MQTT5] Desconectado (Código: 0x%02X)\n", (uint8_t)rc);
+        if ((uint8_t)rc == 0x87) {
+            tryVerifyReasonStringUnlink(mqtt.lastReasonString());
+        }
     });
 
     mqtt.onError([](MQTTReasonCode rc, const String& msg) {
         Serial.printf("[MQTT5] Error 0x%02X: %s\n", (uint8_t)rc, msg.c_str());
+        if ((uint8_t)rc == 0x87) {
+            tryVerifyReasonStringUnlink(msg);
+            tryVerifyReasonStringUnlink(mqtt.lastReasonString());
+        }
     });
 
     mqtt.onMessage([](const MQTTMessage& msg) {
         Serial.printf("[MQTT5] Mensaje recibido en [%s]\n", msg.topic.c_str());
+        if (msg.topic == ("devices/" + g_clientId + "/unlink/command")) {
+            StaticJsonDocument<320> doc;
+            if (deserializeJson(doc, msg.payload) == DeserializationError::Ok) {
+                const char* proof = doc["unlink_proof"] | "";
+                if (verifyUnlinkProof(config.device_key.c_str(), g_clientId.c_str(), proof)) {
+                    Serial.println("[MQTT5] Comando de desvinculación verificado. Restaurando a Quick Pairing...");
+                    if (g_onUnlinkVerifiedCallback) {
+                        g_onUnlinkVerifiedCallback();
+                    }
+                } else {
+                    Serial.println("[MQTT5] AVISO: Comando unlink rechazado por unlink_proof inválido.");
+                }
+            }
+            return;
+        }
         if (g_messageSink) {
             g_messageSink(msg.topic, msg.payload);
         }

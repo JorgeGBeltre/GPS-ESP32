@@ -64,6 +64,6 @@ constexpr unsigned long TIME_SYNC_INTERVAL = 3600000;
 constexpr int FAST_BLINK_INTERVAL = 100;
 constexpr int SLOW_BLINK_INTERVAL = 400;
 
-constexpr const char *FIRMWARE_VERSION = "v0.0.9";
+constexpr const char *FIRMWARE_VERSION = "v0.0.10";
 
 #endif

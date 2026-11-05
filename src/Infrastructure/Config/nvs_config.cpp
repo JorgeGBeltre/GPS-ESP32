@@ -1,9 +1,33 @@
 #include "Infrastructure/Config/nvs_config.h"
 #include "Infrastructure/Config/config.h"
+#include <cstdio>
+#include <cstring>
 #include <esp_system.h>
+#include <mbedtls/sha256.h>
 
 AppConfig config;
 static Preferences preferences;
+
+static bool g_cellSimPresent = false;
+static bool g_cellApnAutoDetected = false;
+static bool g_cellDataConnected = false;
+static char g_cellResolvedApn[64] = {0};
+
+void setCellularProvisioningSnapshot(bool simPresent, bool apnAutoDetected, bool cellularConnected, const char* resolvedApn) {
+    g_cellSimPresent = simPresent;
+    g_cellApnAutoDetected = apnAutoDetected;
+    g_cellDataConnected = cellularConnected;
+    if (resolvedApn && resolvedApn[0] != '\0') {
+        std::snprintf(g_cellResolvedApn, sizeof(g_cellResolvedApn), "%s", resolvedApn);
+    } else if (!apnAutoDetected) {
+        g_cellResolvedApn[0] = '\0';
+    }
+}
+
+bool isCellularSimPresent() { return g_cellSimPresent; }
+bool isCellularApnAutoDetected() { return g_cellApnAutoDetected; }
+bool isCellularDataConnected() { return g_cellDataConnected; }
+const char* getCellularResolvedApn() { return g_cellResolvedApn; }
 
 static String getDefaultChipId() {
     uint64_t chipId = ESP.getEfuseMac();
@@ -39,16 +63,114 @@ void initConfig(const char* defaultDeviceId) {
     }
 }
 
+bool isAccountBound() {
+    return config.account_bound;
+}
+
+bool hasValidWifiCredentials() {
+    return config.wifi_ssid.length() > 0;
+}
+
+bool hasValidCellularCredentials() {
+    return config.apn.length() > 0 || g_cellApnAutoDetected;
+}
+
+bool hasValidBrokerCredentials() {
+    return config.mqtt_broker.length() > 0 &&
+           config.mqtt_broker != MQTT_SERVER &&
+           config.mqtt_broker != "127.0.0.1" &&
+           config.mqtt_user.length() > 0 &&
+           config.mqtt_user != API_KEY;
+}
+
+void computeUnlinkProofHex(const char* deviceKey, const char* chipId, char outHex[33]) {
+    outHex[0] = '\0';
+    if (!deviceKey || !chipId || deviceKey[0] == '\0' || chipId[0] == '\0') {
+        return;
+    }
+    char inputBuf[192];
+    const int n = std::snprintf(inputBuf, sizeof(inputBuf), "%s:UNLINK:%s", deviceKey, chipId);
+    if (n <= 0 || static_cast<size_t>(n) >= sizeof(inputBuf)) {
+        return;
+    }
+    uint8_t digest[32] = {0};
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts_ret(&ctx, 0);
+    mbedtls_sha256_update_ret(&ctx, reinterpret_cast<const unsigned char*>(inputBuf), static_cast<size_t>(n));
+    mbedtls_sha256_finish_ret(&ctx, digest);
+    mbedtls_sha256_free(&ctx);
+
+    for (size_t i = 0; i < 16; ++i) {
+        std::snprintf(outHex + (i * 2), 3, "%02x", digest[i]);
+    }
+    outHex[32] = '\0';
+}
+
+bool verifyUnlinkProof(const char* deviceKey, const char* chipId, const char* providedHex) {
+    if (!providedHex || std::strlen(providedHex) != 32) {
+        return false;
+    }
+    char expectedHex[33] = {0};
+    computeUnlinkProofHex(deviceKey, chipId, expectedHex);
+    if (expectedHex[0] == '\0') {
+        return false;
+    }
+    uint8_t diff = 0;
+    for (size_t i = 0; i < 32; ++i) {
+        char a = providedHex[i];
+        if (a >= 'A' && a <= 'F') {
+            a = static_cast<char>(a - 'A' + 'a');
+        }
+        diff |= static_cast<uint8_t>(a ^ expectedHex[i]);
+    }
+    return diff == 0;
+}
+
+const char* resolveDeviceConfigState(bool wifiConnected, bool cellularConnected, bool mqttConnected) {
+    const bool anyNet = wifiConnected || cellularConnected;
+    if (!hasValidWifiCredentials() && !hasValidCellularCredentials() && !anyNet) {
+        return "unconfigured";
+    }
+    if (!hasValidBrokerCredentials() && !isAccountBound()) {
+        return anyNet ? "wifi_connected" : "incomplete";
+    }
+    if (anyNet && mqttConnected) {
+        return "online";
+    }
+    if (anyNet) {
+        return "wifi_connected";
+    }
+    if (config.last_wifi_error.length() > 0) {
+        return "connection_failed";
+    }
+    return "configured_disconnected";
+}
+
+const char* resolveDeviceCredentialMode(bool wifiConnected) {
+    if (!isAccountBound() &&
+        (g_cellApnAutoDetected || g_cellDataConnected || wifiConnected || config.apn.length() > 0)) {
+        return "adopt_only";
+    }
+    if (!g_cellApnAutoDetected && config.apn.length() == 0) {
+        return "apn";
+    }
+    return "adopt_only";
+}
+
 bool isProvisioned() {
     preferences.begin("relay-config", true);
-    bool ok = preferences.getBool("provisioned", false);
+    const bool ok = preferences.getBool("provisioned", false);
+    const bool acct = preferences.getBool("acct_bound", false);
+    const String ssid = preferences.getString("wifi_ssid", "");
+    const String apn = preferences.getString("apn", "");
     preferences.end();
-    return ok;
+    return ok && (acct || ssid.length() > 0 || apn.length() > 0);
 }
 
 void loadConfig() {
     preferences.begin("relay-config", true);
-    config.apn              = preferences.getString("apn", "internet.claro.com.do");
+    config.apn              = preferences.getString("apn", "");
     config.apn_user         = preferences.getString("apn_user", "");
     config.apn_pass         = preferences.getString("apn_pass", "");
     config.emergency_phone  = preferences.getString("emerg_ph", EMERGENCY_PHONE);
@@ -70,7 +192,12 @@ void loadConfig() {
     config.pulse_enabled    = preferences.getBool("pulse_en", false);
     config.pulse_width_ms   = preferences.getUInt("pulse_w", 500);
     config.sled_online      = preferences.getBool("sled_on", true);
+    config.last_wifi_error  = preferences.getString("wifi_err", "");
+    const bool hasAcctBoundKey = preferences.isKey("acct_bound");
+    const bool storedAcctBound = preferences.getBool("acct_bound", false);
     preferences.end();
+
+    config.account_bound = hasAcctBoundKey ? storedAcctBound : hasValidBrokerCredentials();
 
     if (config.device_key.length() == 0) {
         config.device_key = getDefaultDeviceKey();
@@ -80,6 +207,9 @@ void loadConfig() {
 void saveConfig() {
     if (config.device_key.length() == 0) {
         config.device_key = getDefaultDeviceKey();
+    }
+    if (hasValidBrokerCredentials() || config.bind_token.length() > 0) {
+        config.account_bound = true;
     }
     preferences.begin("relay-config", false);
     preferences.putString("apn",         config.apn);
@@ -104,7 +234,13 @@ void saveConfig() {
     preferences.putBool("pulse_en",      config.pulse_enabled);
     preferences.putUInt("pulse_w",       config.pulse_width_ms);
     preferences.putBool("sled_on",       config.sled_online);
-    preferences.putBool("provisioned",   config.wifi_ssid.length() > 0 || config.apn.length() > 0);
+    preferences.putBool("acct_bound",    config.account_bound);
+    preferences.putString("wifi_err",    config.last_wifi_error);
+    preferences.putBool("provisioned",
+                        config.account_bound ||
+                        hasValidBrokerCredentials() ||
+                        config.wifi_ssid.length() > 0 ||
+                        config.apn.length() > 0);
     preferences.end();
 }
 
@@ -112,6 +248,9 @@ void resetConfig() {
     preferences.begin("relay-config", false);
     preferences.clear();
     preferences.end();
+    config = AppConfig{};
+    config.device_id = getDefaultChipId();
+    config.device_key = getDefaultDeviceKey();
 }
 
 bool saveLastRelayStateNvs(bool state) {

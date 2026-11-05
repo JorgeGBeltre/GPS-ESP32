@@ -72,6 +72,7 @@ struct DeviceConfig {
     bool        pulseEnabled   = false;
     uint32_t    pulseWidthMs   = 500;
     bool        sledOnline     = true;
+    bool        accountBound   = false;
 
     bool        provisioned    = false;
 };

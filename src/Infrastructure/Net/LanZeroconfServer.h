@@ -1,7 +1,9 @@
 #pragma once
 
 #include <WebServer.h>
+#include <WiFiUdp.h>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include "Application/Services/RelayService.h"
 #include "Application/Services/TelemetryService.h"
@@ -12,12 +14,14 @@
 namespace relay::infra {
 
 /**
- * @brief Servidor HTTP LAN local en el puerto 8081 (/zeroconf/*) + mDNS
+ * @brief Servidor HTTP LAN local en el puerto 8081 (/zeroconf/*) + mDNS (_iot._tcp) + UDP :48899
  * Soporta control en red local (texto claro JSON y sobre cifrado AES-128-CBC con MD5(deviceKey)),
  * sincronizado en tiempo real con RelayService y TelemetryService (MQTT 5.0).
  */
 class LanZeroconfServer {
 public:
+    using UnlinkCallback = std::function<void()>;
+
     LanZeroconfServer(app::RelayService& relays,
                       app::TelemetryService& telemetry,
                       app::TimerSchedulerService& timerScheduler,
@@ -27,14 +31,16 @@ public:
                       const std::string& relayDeviceId,
                       uint16_t port = 8081);
 
+    void setUnlinkCallback(UnlinkCallback cb) { unlinkCallback_ = std::move(cb); }
     void loop(bool wifiConnected);
     void notifyMdnsStateChange();
 
 private:
     void startServer();
     void stopServer();
+    void handleDiscoveryUdp();
     void registerEndpoint(const char* uri);
-    void dispatchZeroconf(const char* uri, const String& rawBody, char* respBuf, size_t respBufSize);
+    void dispatchZeroconf(const char* uri, const String& rawBody, char* respBuf, size_t respBufSize, int& httpStatusOut);
 
     app::RelayService& relays_;
     app::TelemetryService& telemetry_;
@@ -46,7 +52,10 @@ private:
     uint16_t port_;
 
     WebServer server_;
+    WiFiUDP discoveryUdp_;
+    UnlinkCallback unlinkCallback_;
     bool running_ = false;
+    bool udpRunning_ = false;
     bool otaUnlocked_ = false;
     uint32_t sequence_ = 1;
 };

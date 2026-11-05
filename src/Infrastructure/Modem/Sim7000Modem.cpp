@@ -1,4 +1,5 @@
 #include "Infrastructure/Modem/Sim7000Modem.h"
+#include "Infrastructure/Config/nvs_config.h"
 
 namespace relay::infra {
 
@@ -147,13 +148,107 @@ void Sim7000Modem::syncFromNmea() {
 }
 
 std::string Sim7000Modem::autoResolveCarrierApn() {
+    String cpinResp = sendATCommandWithReply("AT+CPIN?", 800);
+    if (cpinResp.indexOf("READY") != -1) {
+        simPresent_ = true;
+    }
+
     String imsiResp = sendATCommandWithReply("AT+CIMI", 1200);
     for (size_t i = 0; i < sizeof(kCarrierApnTable) / sizeof(kCarrierApnTable[0]); ++i) {
         if (imsiResp.indexOf(kCarrierApnTable[i].mccMncPrefix) != -1) {
-            return std::string(kCarrierApnTable[i].apn);
+            simPresent_ = true;
+            apnAutoDetected_ = true;
+            resolvedApn_ = kCarrierApnTable[i].apn;
+            String cgatt = sendATCommandWithReply("AT+CGATT?", 600);
+            if (cgatt.indexOf("+CGATT: 1") != -1) {
+                cellularConnected_ = true;
+            }
+            setCellularProvisioningSnapshot(simPresent_, apnAutoDetected_, cellularConnected_, resolvedApn_.c_str());
+            return resolvedApn_;
         }
     }
-    return "";
+
+    // Fallback LTE: si el módem adjuntó automáticamente por EPS Default Bearer (+CGNAPN / +CGDCONT?)
+    String cgattResp = sendATCommandWithReply("AT+CGATT?", 800);
+    if (cgattResp.indexOf("+CGATT: 1") != -1) {
+        simPresent_ = true;
+        cellularConnected_ = true;
+    }
+
+    auto extractQuotedApn = [](const String& resp, const char* tag, int quoteIndex) -> std::string {
+        int pos = resp.indexOf(tag);
+        if (pos == -1) return "";
+        int qStart = -1;
+        int seenQuotes = 0;
+        for (int i = pos; i < (int)resp.length(); ++i) {
+            if (resp[i] == '"') {
+                ++seenQuotes;
+                if (seenQuotes == quoteIndex) {
+                    qStart = i + 1;
+                } else if (seenQuotes == quoteIndex + 1 && qStart > 0) {
+                    String candidate = resp.substring(qStart, i);
+                    candidate.trim();
+                    if (candidate.length() > 0) {
+                        return std::string(candidate.c_str());
+                    }
+                    break;
+                }
+            }
+        }
+        return "";
+    };
+
+    String cgnapnResp = sendATCommandWithReply("AT+CGNAPN", 800);
+    std::string netApn = extractQuotedApn(cgnapnResp, "+CGNAPN:", 1);
+    if (netApn.empty() && cellularConnected_) {
+        String cgdcontResp = sendATCommandWithReply("AT+CGDCONT?", 800);
+        netApn = extractQuotedApn(cgdcontResp, "+CGDCONT:", 3);
+    }
+
+    if (!netApn.empty()) {
+        simPresent_ = true;
+        apnAutoDetected_ = true;
+        resolvedApn_ = netApn;
+    }
+
+    setCellularProvisioningSnapshot(simPresent_, apnAutoDetected_, cellularConnected_, resolvedApn_.c_str());
+    return resolvedApn_;
+}
+
+void Sim7000Modem::probeCellularProvisioningState() {
+    if (pwrKeyPin_ != 0xFF) {
+        pinMode(pwrKeyPin_, INPUT);
+    }
+    bool uartOk = isReady_ || probeAtOrNmea(baud_, rxPin_, txPin_, 2, 250);
+    if (!uartOk && baud_ != 9600) {
+        uartOk = probeAtOrNmea(9600, rxPin_, txPin_, 1, 250);
+        if (uartOk && isReady_) {
+            sendATCommand("AT+IPR=115200", "OK", 400);
+            serial_.begin(baud_, SERIAL_8N1, rxPin_, txPin_);
+            activeBaud_ = baud_;
+            delay(80);
+        } else if (!uartOk) {
+            serial_.begin(baud_, SERIAL_8N1, rxPin_, txPin_);
+            activeBaud_ = baud_;
+        }
+    }
+
+    if (uartOk && isReady_) {
+        sendATCommand("ATE0", "OK", 400);
+        std::string detected = autoResolveCarrierApn();
+        if (!detected.empty() && apn_.empty()) {
+            apn_ = detected;
+            String cgdcont = String("AT+CGDCONT=1,\"IP\",\"") + apn_.c_str() + "\"";
+            sendATCommand(cgdcont, "OK", 600);
+        }
+        Serial.printf("[SIM7000] Sondeo celular para aprovisionamiento: SIM=%d, autoAPN=%d (%s), CGATT=%d\n",
+                      simPresent_ ? 1 : 0,
+                      apnAutoDetected_ ? 1 : 0,
+                      resolvedApn_.c_str(),
+                      cellularConnected_ ? 1 : 0);
+    } else {
+        setCellularProvisioningSnapshot(simPresent_, apnAutoDetected_, cellularConnected_, resolvedApn_.c_str());
+    }
 }
 
 void Sim7000Modem::applyDriftAndTowFilter(double rawLat, double rawLon, float speedKmh, float hdop) {
