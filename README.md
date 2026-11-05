@@ -98,13 +98,15 @@ The firmware combines high-frequency GPS positioning (`TinyGPSPlus`), 6-axis ine
 | **Inching / Pulse Mode** | Configurable auto-shutoff timer (`configurePulse`, `updatePulseTimer`) from `500 ms` to `36,000,000 ms` in `500 ms` steps |
 | **Scheduled UTC Timers** | Up to `8` persistent NVS timers (`Once`, `Repeat`, `Duration`) evaluated once per second against UTC epoch time (`TimerSchedulerService`) |
 | **Quick Pairing (BLE + SmartConfig)** | Simultaneous **BLE GATT (`GPS-<DeviceID>`)** and **ESP-Touch / AirKiss** provisioning triggered immediately upon holding the button for `5.0 s` |
-| **Compatible SoftAP (`GPS-<ChipID>`)** | Stage 2 captive portal triggered by a 2nd `5.0 s` long press, preserving the `GPS-<ChipID>` SSID and `12345678` passphrase |
-| **Local LAN HTTP & mDNS** | HTTP server on port `8081` (`/zeroconf/*`) + `_ewelink._tcp` mDNS discovery supporting plain JSON and `AES-128-CBC` encrypted payloads |
+| **Compatible SoftAP (`GPS-<ChipID>`)** | Stage 2 captive portal triggered by a 2nd `5.0 s` long press, preserving the `GPS-<ChipID>` SSID and `12345678` passphrase with `WiFi.setAutoReconnect(false)` SoftAP channel stability |
+| **Local LAN HTTP & mDNS** | HTTP server on port `8081` (`/zeroconf/*`) + `_iot._tcp` mDNS (`iot_<ChipID>.local`) and UDP `:48899` (`IOT_DISCOVER`) discovery supporting plain JSON and `AES-128-CBC` encrypted payloads |
 | **GNSS + LTE (SIM7000G) & MPU6050** | Satellite positioning, impact/rollover/harsh-dynamics detection, and redundant alerts via MQTT 5.0 and SMS |
 | **Speed-Safe Immobilizer Cutoff (`GTDOS` / `GTGDO`)** | Defers remote relay cutoff commands (`requestSpeedSafeCutoff`, `evaluatePendingSpeedSafeCutoff`) when vehicle GNSS speed exceeds `safeCutoffSpeedKmh_` (`20.0 km/h` default) and executes the cutoff automatically once speed drops safely |
 | **Static Drift Filter, Tow & Harsh Cornering (`GTRDF` / `GTTOW` / `GTHBM`)** | Stationary coordinate pinning (`30 m` radius at `< 3.0 km/h`), parked tow detection (`>= 100 m`), virtual ignition (`GTVVS`/`GTAVS`), and lateral harsh cornering (`>= 0.45g` at `>= 15 km/h`) |
-| **MCC/MNC Auto-APN & Jamming/Roaming Detection (`GTJDC` / `GTRMD`)** | Auto-resolves carrier APN from `AT+CIMI` (IMSI MCC/MNC table) when unconfigured and monitors `AT+CSQ` + `AT+CREG?` for cellular RF jamming and roaming |
-| **Native MQTT 5.0 + Secure OTA** | Powered by `ESP32_MQTTv5` and `MQTTOTAv5` with non-blocking reconnection and `SHA-256` / `HMAC-SHA256` verification |
+| **MCC/MNC Auto-APN & Jamming/Roaming Detection (`GTJDC` / `GTRMD`)** | Auto-resolves carrier APN from `AT+CPIN?` / `AT+CIMI` (IMSI MCC/MNC table) / `AT+CGNAPN` / `AT+CGDCONT?` without hardcoded APN defaults and monitors `AT+CSQ` + `AT+CREG?` for cellular RF jamming and roaming |
+| **Family Identity & Dynamic `credential_mode`** | Broadcasts 7-byte VESIS BLE Manufacturer Data (`0xFFFF` `'V','S'`, `device_code = 0x02`) and exposes `device_family = "gps_esp32"` with dynamic `credential_mode` (`"apn"` vs `"adopt_only"` when SIM7000G auto-detects APN or Wi-Fi is active while unbound) for 1-tap account adoption |
+| **Account Binding & Cryptographic Unlink (`account_bound`)** | Persists `acct_bound` in NVS to distinguish temporary Wi-Fi/LTE outages from verified account removal (`devices/<ChipID>/unlink/command`, MQTT 5.0 `0x87` `ACCOUNT_UNLINKED:<proof>`, or `POST /zeroconf/unlink` validated via `SHA256(deviceKey + ":UNLINK:" + chipId)[0..31]`) |
+| **Native MQTT 5.0 + Secure OTA** | Powered by `ESP32_MQTTv5` (`v1.0.6`) and `MQTTOTAv5` (`v1.0.3`) with `{ChipID}`-scoped topics, automatic plain TCP (`:1883`) vs TLS (`:8883`) selection, and `SHA-256` / `HMAC-SHA256` verification |
 
 ---
 
@@ -425,6 +427,8 @@ Default board wiring configured in `src/Infrastructure/Config/BoardConfig.h`:
 | **Push Button** | `GPIO 0` | Button Pin | Digital Input (`INPUT_PULLUP`) | Short press: Toggle relay / Long press (`5.0 s`): Quick Pairing & SoftAP |
 | **Status LED** | `GPIO 2` | Anode | Digital Output | Non-blocking system & network state indicator |
 
+> **SIM7000G Integrated GNSS + LTE Carrier Note**: On integrated `SIM7000G` boards (`src/Infrastructure/Config/config.h`), the combined GNSS/LTE UART and modem power control map to `SIM7000_RX_PIN = 16`, `SIM7000_TX_PIN = 17`, and `SIM7000_PWRKEY_PIN = 23` at `SIM7000_BAUD = 115200`.
+
 ---
 
 ## 2-Stage Pairing Workflow (Quick Pairing + SoftAP)
@@ -460,19 +464,20 @@ stateDiagram-v2
 
 ## Local LAN HTTP Control (`/zeroconf/*`) & mDNS
 
-When connected to Wi-Fi, [`LanZeroconfServer`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS-ESP32/src/Infrastructure/Net/LanZeroconfServer.h) exposes port **`8081`** and advertises `_ewelink._tcp.local` over mDNS:
+When connected to Wi-Fi, [`LanZeroconfServer`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS-ESP32/src/Infrastructure/Net/LanZeroconfServer.h) exposes port **`8081`**, advertises `_iot._tcp.local` (`iot_<ChipID>.local`, TXT `type=gps_relay`, `family=gps_esp32`) over mDNS, and answers local UDP broadcast probes on port **`48899`** (`IOT_DISCOVER`):
 
-| HTTP `POST :8081` Endpoint | Description |
+| HTTP `:8081` Endpoint | Description |
 |---|---|
 | `/zeroconf/switch` & `/zeroconf/switches` | Toggle relay state (`{"switch":"on"}` / `{"switch":"off"}`) |
 | `/zeroconf/startup` | Configure power-on state (`{"startup":"off"\|"on"\|"stay"}`) |
 | `/zeroconf/pulse` | Configure Inching / Pulse mode (`{"pulse":"on","pulseWidth":1000}`) |
 | `/zeroconf/sled` | Enable or disable the online status LED (`{"sledOnline":"on"\|"off"}`) |
 | `/zeroconf/timers` | Configure local scheduled timers (`once`, `repeat`, `duration`) |
-| `/zeroconf/info` | Query current switch state, cellular `apn`, emergency SMS settings (`emergencyPhone`, `smsEnabled`), MPU6050 thresholds (`sensitivity`, `rolloverAngle`), firmware version, and Wi-Fi RSSI |
+| `/zeroconf/info` (`GET` / `POST`) | Query current switch state, `device_family`, `credential_mode`, `account_bound`, cellular `apn`, emergency SMS settings (`emergencyPhone`, `smsEnabled`), MPU6050 thresholds (`sensitivity`, `rolloverAngle`), firmware version, and Wi-Fi RSSI |
 | `/zeroconf/signal_strength` | Query current Wi-Fi RSSI in dBm |
 | `/zeroconf/wifi` | Update Wi-Fi credentials, cellular `apn` (`apn`, `apn_user`, `apn_pass`), and MQTT 5.0 broker parameters in NVS |
 | `/zeroconf/config` | Update cellular `apn`, `emergency_phone`, `sms_enabled`, MPU6050 `sensitivity` / `rollover_angle`, MQTT 5.0 broker, startup, pulse, and SLED in NVS |
+| `/zeroconf/unlink` | Cryptographically verified local account unlink (`unlink_proof = SHA256(deviceKey + ":UNLINK:" + chipId)[0..31]`); clears credentials, sets `account_bound = false`, and reboots into Stage 1 Quick Pairing |
 | `/zeroconf/ota_unlock` | Unlock local OTA updates |
 
 ---
@@ -534,8 +539,8 @@ In severe road incidents, WiFi connectivity may be unavailable. The `Sim7000Aler
 
 Linked and managed automatically via PlatformIO:
 
-- **[ESP32_MQTTv5](https://github.com/JorgeGBeltre/ESP32_MQTTv5)** (`^1.0.3`): Native MQTT 5.0 client library for ESP32.
-- **[MQTTOTAv5](https://github.com/JorgeGBeltre/MQTTOTAv5)** (`^1.0.2`): Over-The-Air firmware updater over MQTT 5.0.
+- **[ESP32_MQTTv5](https://github.com/JorgeGBeltre/ESP32_MQTTv5)** (`v1.0.6`, linked via `file://../ESP32_MQTTv5`): Native MQTT 5.0 client library for ESP32 with `lastReasonString()` / `CONNACK` reason diagnostics and automatic plain TCP (`:1883`) vs TLS (`:8883`) transport selection.
+- **[MQTTOTAv5](https://github.com/JorgeGBeltre/MQTTOTAv5)** (`v1.0.3`, linked via `file://../MQTTOTAv5`): Over-The-Air firmware updater over MQTT 5.0.
 - **[NimBLE-Arduino](https://github.com/h2zero/NimBLE-Arduino)** (`^1.4.1`): High-performance, lightweight Bluetooth Low Energy stack.
 - **[TinyGPSPlus](https://github.com/mikalhart/TinyGPSPlus)** (`^1.1.0`): High-performance NMEA GPS parser.
 - **[MPU6050](https://github.com/ElectronicCats/mpu6050)** (`^1.4.5`): 6-axis IMU driver with I2Cdevlib.
@@ -594,32 +599,33 @@ The device implements an on-demand Bluetooth Low Energy (BLE) provisioning syste
 
 - **Service UUID**: `12345678-1234-1234-1234-123456789abc`
 - **Advertisement Name**: `GPS-<DeviceID>` (e.g. `GPS-0000A1B2C3D4`)
+- **Manufacturer Specific Data (`0xFFFF`)**: 7-byte VESIS header `[0xFF, 0xFF, 'V', 'S', stateByte, 0x02, provFlags]` identifying `device_code = 0x02` (`device_family = "gps_esp32"`), configuration state, and provisioning flags (`bit0: simPresent`, `bit1: apnAuto`, `bit2: cellData`, `bit3: adoptReady`, `bit4: wifiReady`, `bit5: accountBound`)
 
 | Characteristic | UUID | Permissions | Description | Example / Default Value |
 |---|---|---|---|---|
-| **Cellular APN** | `aaaaaaaa-bbbb-cccc-dddd-000000000001` | `READ` / `WRITE` | Cellular Access Point Name for GSM/LTE modem | `"internet.claro.com"` |
+| **Cellular APN** | `aaaaaaaa-bbbb-cccc-dddd-000000000001` | `READ` / `WRITE` | Cellular Access Point Name for GSM/LTE modem | `""` (auto-detected) or `"internet.claro.com"` |
 | **APN Username** | `aaaaaaaa-bbbb-cccc-dddd-000000000002` | `READ` / `WRITE` | Cellular APN username | `""` or `"claro"` |
-| **APN Password** | `aaaaaaaa-bbbb-cccc-dddd-000000000003` | `READ` / `WRITE` | Cellular APN password | `""` or `"claro"` |
+| **APN Password** | `aaaaaaaa-bbbb-cccc-dddd-000000000003` | `WRITE` | Write-only cellular APN password (never readable over BLE) | `""` |
 | **Cloud Broker** | `aaaaaaaa-bbbb-cccc-dddd-000000000004` | `READ` / `WRITE` | MQTT 5.0 broker endpoint hostname/IP | `"broker.hivemq.com"` |
 | **Broker Port** | `aaaaaaaa-bbbb-cccc-dddd-000000000005` | `READ` / `WRITE` | TCP/TLS broker port | `8883` (TLS) or `1883` |
 | **User / Account** | `aaaaaaaa-bbbb-cccc-dddd-000000000006` | `READ` / `WRITE` | User account / registered email / MQTT user | `"user@example.com"` |
-| **MQTT Password** | `aaaaaaaa-bbbb-cccc-dddd-000000000007` | `READ` / `WRITE` | MQTT broker password | `""` |
+| **MQTT Password** | `aaaaaaaa-bbbb-cccc-dddd-000000000007` | `WRITE` | Write-only MQTT broker password (never readable over BLE) | `""` |
 | **Device ID** | `aaaaaaaa-bbbb-cccc-dddd-000000000008` | `READ` / `WRITE` | Unique hardware identifier presented to cloud | `0000A1B2C3D4` |
-| **OTA HMAC Key** | `aaaaaaaa-bbbb-cccc-dddd-000000000011` | `READ` / `WRITE` | HMAC signature key for OTA verification | `""` |
+| **OTA HMAC Key** | `aaaaaaaa-bbbb-cccc-dddd-000000000011` | `WRITE` | Write-only HMAC signature key for OTA verification | `""` |
 | **WiFi SSID** | `aaaaaaaa-bbbb-cccc-dddd-000000000012` | `READ` / `WRITE` | 2.4 GHz wireless network SSID | `"Fleet_Depot_WiFi"` |
-| **WiFi Password** | `aaaaaaaa-bbbb-cccc-dddd-000000000013` | `READ` / `WRITE` | WPA/WPA2 passphrase | `"SecretPassword123"` |
-| **JSON / Data Frame** | `aaaaaaaa-bbbb-cccc-dddd-000000000014` | `READ` / `WRITE` / `NOTIFY` | Unified frame channel (read identity; write JSON/Key-Value) | See JSON frame format |
+| **WiFi Password** | `aaaaaaaa-bbbb-cccc-dddd-000000000013` | `WRITE` | Write-only WPA/WPA2 passphrase (never readable over BLE) | `"SecretPassword123"` |
+| **JSON / Data Frame** | `aaaaaaaa-bbbb-cccc-dddd-000000000014` | `READ` / `WRITE` / `NOTIFY` | Unified frame channel (read identity + `credential_mode`; write chunked JSON `<= 2048` B / Key-Value) | See JSON frame format |
 | **Device Key** | `aaaaaaaa-bbbb-cccc-dddd-000000000015` | `READ` | Factory private hardware key (`apikey`) | Unique cryptographic UUID |
-| **Bind Token** | `aaaaaaaa-bbbb-cccc-dddd-000000000016` | `READ` / `WRITE` | User account claim token from mobile app | `"claim_tok_9876543210"` |
+| **Bind Token** | `aaaaaaaa-bbbb-cccc-dddd-000000000016` | `WRITE` | Write-only user account claim token from mobile app | `"claim_tok_9876543210"` |
 | **Save / ACK** | `aaaaaaaa-bbbb-cccc-dddd-000000000099` | `WRITE` / `READ` / `NOTIFY` | Save trigger into NVS and ACK notification (`"OK"`) | `"READY"` -> Notifies `"OK"` |
 
 ### Standard Bluetooth Device Information Service (`0x180A`)
 
 | Standard Characteristic | SIG UUID | Permissions | Returned Value |
 |---|---|---|---|
-| **Model Number String** | `0x2A24` | `READ` | `"VESIS GPS-Tracker ESP32"` |
+| **Model Number String** | `0x2A24` | `READ` | `"VESIS-GPS-ESP32"` |
 | **Serial Number String** | `0x2A25` | `READ` | `<DeviceID>` (e.g. `0000A1B2C3D4`) |
-| **Firmware Revision** | `0x2A26` | `READ` | Firmware version (e.g. `"v0.0.8"`) |
+| **Firmware Revision** | `0x2A26` | `READ` | Firmware version (e.g. `"v0.0.10"`) |
 | **Hardware Revision** | `0x2A27` | `READ` | `"ESP32"` |
 | **Manufacturer Name** | `0x2A29` | `READ` | `"VESIS"` |
 
@@ -664,11 +670,11 @@ apn=internet.claro.com;ssid=Fleet_Depot_WiFi;pass=SecretPassword;server=broker.h
 
 ### Dual Provisioning Flow & Fallback Architecture
 
-1. **Unprovisioned First Boot**: The device enters BLE advertising as `GPS-<DeviceID>` for 60 seconds. If no mobile app connects, it automatically falls back to the SoftAP captive web portal:
+1. **Unprovisioned First Boot**: Before opening pairing, the firmware probes the SIM7000G modem (`AT+CPIN?`, `AT+CIMI`, `AT+CGNAPN`, `AT+CGDCONT?`) with no hardcoded APN default (`apn = ""` in NVS) to publish an accurate `credential_mode` (`"adopt_only"` with `adopt_ready: true` when carrier APN or Wi-Fi is already active while `!account_bound`, or `"apn"` when cellular APN credentials are still required). In `"adopt_only"` mode, both BLE (`0x0014` with bounded `<= 2048` B JSON chunk reassembly) and SoftAP (`GET /device`, `POST /ap`) accept account-binding payloads (`server`, `port`, `account`, `bind_token`, `device_key`) without overwriting stored Wi-Fi or APN credentials. If Stage 1 times out or receives a 2nd `5.0 s` button hold, the NimBLE stack is cleanly torn down (`advertiseOnDisconnect(false)`) and SoftAP opens with `WiFi.setAutoReconnect(false)` for channel stability:
    - **SSID**: `GPS-<ChipID>`
    - **Password**: `12345678`
-   - **Web Portal**: Automatically serves captive form with APN, APN User, APN Password, WiFi SSID, and WiFi Password fields.
-2. **Button Long-Press (> 3000 ms)**: Holding GPIO 0 triggers the BLE provisioning mode at any time.
+   - **Web Portal**: Automatically serves captive form and Compatible Pairing JSON (`GET /device`, `POST /ap`) with APN, APN User, APN Password, WiFi SSID, and WiFi Password fields.
+2. **Button Long-Press (`5000 ms` / `5.0 s`)**: Holding GPIO 0 for `5.0 s` triggers Stage 1 Quick Pairing (`BLE + SmartConfig`) at any time; holding GPIO 0 for a 2nd `5.0 s` switches to Stage 2 SoftAP (`GPS-<ChipID>`).
 3. **Boot Hold**: Powering up while holding GPIO 0 forces immediate entry into provisioning mode.
 
 ---
@@ -677,19 +683,21 @@ apn=internet.claro.com;ssid=Fleet_Depot_WiFi;pass=SecretPassword;server=broker.h
 
 ### Topic Topology
 
-Topics are dynamically derived at runtime using the chip's unique eFuse MAC address:
+Topics are dynamically derived at runtime using the chip's unique 12-character eFuse MAC `<ChipID>` (`MqttTopics::forDevice(chipId)`), isolating every device on multi-tenant MQTT 5.0 brokers:
 
 | Topic | Direction | Description |
 |---|---|---|
 | `telemetry/<ChipID>/gps` | Outbound | Continuous high-precision GPS positioning and kinematics |
-| `event/<ChipID>/alerts` | Outbound | High-priority safety events (Impacts, Rollovers, Harsh Driving) |
-| `status` | Outbound | Periodic system metrics and relay status report; also MQTT 5.0 LWT topic |
-| `events` | Outbound | System lifecycle events (`MQTT_CONNECTED`, `BUTTON_PRESS`, etc.) |
-| `telemetry` | Outbound | System health snapshot (heap, uptime, RSSI) |
-| `commands` | Inbound | Control commands (`reset`, `status`, `toggle_all`, `switch1:...`) |
-| `device_switch1/state` | Inbound | Turn relay on/off/toggle via MQTT payload (`on`, `off`, `toggle`) |
-| `device_switch1_state` | Inbound/Outbound | Desired state from cloud / Confirmed state from device |
-| `ota` | Inbound | Handled automatically by `MQTTOTAv5` |
+| `telemetry/<ChipID>/accidents` | Outbound | High-priority safety events (Impacts, Rollovers, Harsh Driving) |
+| `status/<ChipID>` | Outbound | Periodic system metrics and relay status report; also MQTT 5.0 LWT topic (`WillDelay = 5` s) |
+| `events/<ChipID>` | Outbound | System lifecycle events (`MQTT_CONNECTED`, `BUTTON_PRESS`, etc.) |
+| `telemetry/<ChipID>` | Outbound | System health snapshot (heap, uptime, RSSI) |
+| `commands/<ChipID>` | Inbound | Control commands (`reset`, `status`, `toggle_all`, `switch1:...`) |
+| `event/<ChipID>` | Inbound | Cloud envelope commands routed to the device |
+| `devices/<ChipID>/device_switch1/command` | Inbound | Turn relay on/off/toggle via MQTT payload (`on`, `off`, `toggle`, or JSON command) |
+| `devices/<ChipID>/device_switch1_state` | Inbound/Outbound | Desired state from cloud / Confirmed state from device |
+| `devices/<ChipID>/unlink/command` | Inbound | Cryptographically verified account unlink (`unlink_proof = SHA256(deviceKey + ":UNLINK:" + chipId)[0..31]`); also enforced on MQTT 5.0 `CONNACK`/`DISCONNECT` `0x87` (`ACCOUNT_UNLINKED:<proof>`) |
+| `ota/<ChipID>` | Inbound | Handled automatically by `MQTTOTAv5` |
 
 ### GPS Telemetry Payloads
 
@@ -714,7 +722,7 @@ Published periodically to `telemetry/<ChipID>/gps`:
 
 ### Accident & Safety Alert Payloads
 
-Published immediately with QoS 1 to `event/<ChipID>/alerts`:
+Published immediately with QoS 1 to `telemetry/<ChipID>/accidents`:
 
 ```json
 {
@@ -739,7 +747,7 @@ Published immediately with QoS 1 to `event/<ChipID>/alerts`:
 
 ### Device Status & Actuator Payloads
 
-Published to `status`:
+Published to `status/<ChipID>`:
 
 ```json
 {
@@ -748,7 +756,7 @@ Published to `status`:
     "ChipId": "0000A1B2C3D4",
     "MacAddress": "24:6F:28:XX:XX:XX",
     "ChipType": "ESP32-D0WDQ6",
-    "FirmwareVersion": "v0.0.8"
+    "FirmwareVersion": "v0.0.10"
   },
   "Timestamp": "2026-10-28T05:00:00.000Z",
   "Details": {
@@ -772,7 +780,7 @@ Published to `status`:
 
 ### Inbound Command Handling
 
-Sending strings to `commands`:
+Sending strings to `commands/<ChipID>`:
 - `"reset"`: Triggers a clean system restart via `ESP.restart()`.
 - `"status"`: Forces immediate publication of the full device status JSON.
 - `"toggle_all"`: Inverts all active relays.
@@ -793,8 +801,8 @@ Over-The-Air updates are fully handled by **`MQTTOTAv5`**:
 ## Physical Controls & Status Indicator (LED)
 
 ### Push Button (GPIO 0)
-- **Short Press (< 3000 ms)**: Toggles Relay 1 locally, emits a `"BUTTON_PRESS"` event to `events`, and publishes the confirmed state (`"on"`/`"off"`) to `device_switch1_state`.
-- **Long Press (> 3000 ms)**: Launches the **BLE Provisioning Portal** (advertising as `GPS-<DeviceID>` for 60 seconds with rapid LED blinking). If timeout expires without receiving configuration, automatically falls back to the SoftAP captive portal (`GPS-<ChipID>`).
+- **Short Press (< 5000 ms)**: Toggles Relay 1 locally, emits a `"BUTTON_PRESS"` event to `events/<ChipID>`, and publishes the confirmed state (`"on"`/`"off"`) to `devices/<ChipID>/device_switch1_state` (or cancels active pairing mode and returns to normal operation).
+- **Long Press (>= 5000 ms / 5.0 s)**: Launches Stage 1 **Quick Pairing** (`GPS-<DeviceID>` BLE GATT + SmartConfig). Holding GPIO 0 for a 2nd `5.0 s` switches to Stage 2 SoftAP (`GPS-<ChipID>`).
 
 ### Status LED (GPIO 2)
 - **Fast Blink (100 ms interval)**: Disconnected from WiFi / BLE Provisioning active / Searching for network.
