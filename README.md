@@ -539,8 +539,8 @@ In severe road incidents, WiFi connectivity may be unavailable. The `Sim7000Aler
 
 Linked and managed automatically via PlatformIO:
 
-- **[ESP32_MQTTv5](https://github.com/JorgeGBeltre/ESP32_MQTTv5)** (`v1.0.6`, linked via `file://../ESP32_MQTTv5`): Native MQTT 5.0 client library for ESP32 with `lastReasonString()` / `CONNACK` reason diagnostics and automatic plain TCP (`:1883`) vs TLS (`:8883`) transport selection.
-- **[MQTTOTAv5](https://github.com/JorgeGBeltre/MQTTOTAv5)** (`v1.0.3`, linked via `file://../MQTTOTAv5`): Over-The-Air firmware updater over MQTT 5.0.
+- **[ESP32_MQTTv5](https://github.com/JorgeGBeltre/ESP32_MQTTv5)** (`v1.0.6`): Native MQTT 5.0 client library for ESP32 with `lastReasonString()` / `CONNACK` reason diagnostics and automatic plain TCP (`:1883`) vs TLS (`:8883`) transport selection.
+- **[MQTTOTAv5](https://github.com/JorgeGBeltre/MQTTOTAv5)** (`v1.0.3`): Over-The-Air firmware updater over MQTT 5.0.
 - **[NimBLE-Arduino](https://github.com/h2zero/NimBLE-Arduino)** (`^1.4.1`): High-performance, lightweight Bluetooth Low Energy stack.
 - **[TinyGPSPlus](https://github.com/mikalhart/TinyGPSPlus)** (`^1.1.0`): High-performance NMEA GPS parser.
 - **[MPU6050](https://github.com/ElectronicCats/mpu6050)** (`^1.4.5`): 6-axis IMU driver with I2Cdevlib.
