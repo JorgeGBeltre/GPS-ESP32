@@ -106,7 +106,7 @@ The firmware combines high-frequency GPS positioning (`TinyGPSPlus`), 6-axis ine
 | **MCC/MNC Auto-APN & Jamming/Roaming Detection (`GTJDC` / `GTRMD`)** | Auto-resolves carrier APN from `AT+CPIN?` / `AT+CIMI` (IMSI MCC/MNC table) / `AT+CGNAPN` / `AT+CGDCONT?` without hardcoded APN defaults and monitors `AT+CSQ` + `AT+CREG?` for cellular RF jamming and roaming |
 | **Family Identity & Dynamic `credential_mode`** | Broadcasts 7-byte VESIS BLE Manufacturer Data (`0xFFFF` `'V','S'`, `device_code = 0x02`) and exposes `device_family = "gps_esp32"` with dynamic `credential_mode` (`"apn"` vs `"adopt_only"` when SIM7000G auto-detects APN or Wi-Fi is active while unbound) for 1-tap account adoption |
 | **Account Binding & Cryptographic Unlink (`account_bound`)** | Persists `acct_bound` in NVS to distinguish temporary Wi-Fi/LTE outages from verified account removal (`devices/<ChipID>/unlink/command`, MQTT 5.0 `0x87` `ACCOUNT_UNLINKED:<proof>`, or `POST /zeroconf/unlink` validated via `SHA256(deviceKey + ":UNLINK:" + chipId)[0..31]`) |
-| **Native MQTT 5.0 + Secure OTA** | Powered by `ESP32_MQTTv5` (`v1.0.6`) and `MQTTOTAv5` (`v1.0.3`) with `{ChipID}`-scoped topics, automatic plain TCP (`:1883`) vs TLS (`:8883`) selection, and `SHA-256` / `HMAC-SHA256` verification |
+| **Native MQTT 5.0 + Secure OTA** | Powered by `ESP32_MQTTv5` (`v1.0.7`) and `MQTTOTAv5` (`v1.0.3`) with `{ChipID}`-scoped topics, strict packet/property bounds validation, automatic plain TCP (`:1883`) vs TLS (`:8883`) selection, and `SHA-256` / `HMAC-SHA256` verification |
 
 ---
 
@@ -539,7 +539,7 @@ In severe road incidents, WiFi connectivity may be unavailable. The `Sim7000Aler
 
 Linked and managed automatically via PlatformIO:
 
-- **[ESP32_MQTTv5](https://github.com/JorgeGBeltre/ESP32_MQTTv5)** (`v1.0.6`): Native MQTT 5.0 client library for ESP32 with `lastReasonString()` / `CONNACK` reason diagnostics and automatic plain TCP (`:1883`) vs TLS (`:8883`) transport selection.
+- **[ESP32_MQTTv5](https://github.com/JorgeGBeltre/ESP32_MQTTv5)** (`v1.0.7`): Native MQTT 5.0 client library for ESP32 with strict packet/property bounds validation (`65535 - 512` RX cap), `lastReasonString()` / `CONNACK` reason diagnostics, and automatic plain TCP (`:1883`) vs TLS (`:8883`) transport selection.
 - **[MQTTOTAv5](https://github.com/JorgeGBeltre/MQTTOTAv5)** (`v1.0.3`): Over-The-Air firmware updater over MQTT 5.0.
 - **[NimBLE-Arduino](https://github.com/h2zero/NimBLE-Arduino)** (`^1.4.1`): High-performance, lightweight Bluetooth Low Energy stack.
 - **[TinyGPSPlus](https://github.com/mikalhart/TinyGPSPlus)** (`^1.1.0`): High-performance NMEA GPS parser.
