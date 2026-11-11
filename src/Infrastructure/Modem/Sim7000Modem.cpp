@@ -1,5 +1,7 @@
 #include "Infrastructure/Modem/Sim7000Modem.h"
 #include "Infrastructure/Config/nvs_config.h"
+#include <cmath>
+#include <cstdlib>
 
 namespace relay::infra {
 
@@ -30,6 +32,58 @@ constexpr CarrierApnEntry kCarrierApnTable[] = {
     {"21401", "airtelnet.es"},
     {"21407", "movistar.es"},
 };
+
+bool parseRegLacCellId(const String& regResp, uint32_t& outLac, uint32_t& outCellId) {
+    int q1 = regResp.indexOf('"');
+    if (q1 == -1) return false;
+    int q2 = regResp.indexOf('"', q1 + 1);
+    if (q2 == -1) return false;
+    int q3 = regResp.indexOf('"', q2 + 1);
+    if (q3 == -1) return false;
+    int q4 = regResp.indexOf('"', q3 + 1);
+    if (q4 == -1) return false;
+
+    String lacHex = regResp.substring(q1 + 1, q2);
+    String ciHex  = regResp.substring(q3 + 1, q4);
+    lacHex.trim();
+    ciHex.trim();
+    if (lacHex.length() == 0 || ciHex.length() == 0) return false;
+
+    uint32_t lac = static_cast<uint32_t>(std::strtoul(lacHex.c_str(), nullptr, 16));
+    uint32_t ci  = static_cast<uint32_t>(std::strtoul(ciHex.c_str(), nullptr, 16));
+    if (ci == 0 || ci == 0xFFFFFFFFUL) return false;
+
+    outLac = lac;
+    outCellId = ci;
+    return true;
+}
+
+void extractDigitsMccMnc(const String& raw, int& outMcc, int& outMnc) {
+    String digits = "";
+    for (int i = 0; i < (int)raw.length(); ++i) {
+        if (raw[i] >= '0' && raw[i] <= '9') {
+            digits += raw[i];
+        } else if (digits.length() >= 5) {
+            break;
+        } else {
+            digits = "";
+        }
+    }
+    if (digits.length() >= 5) {
+        outMcc = digits.substring(0, 3).toInt();
+        int mncLen = 2;
+        for (size_t i = 0; i < sizeof(kCarrierApnTable) / sizeof(kCarrierApnTable[0]); ++i) {
+            if (digits.startsWith(kCarrierApnTable[i].mccMncPrefix)) {
+                int pLen = static_cast<int>(strlen(kCarrierApnTable[i].mccMncPrefix));
+                if (pLen >= 5) mncLen = pLen - 3;
+                break;
+            }
+        }
+        if ((int)digits.length() >= 3 + mncLen) {
+            outMnc = digits.substring(3, 3 + mncLen).toInt();
+        }
+    }
+}
 } // namespace
 
 Sim7000Modem::Sim7000Modem(HardwareSerial& serial,
@@ -130,20 +184,24 @@ void Sim7000Modem::syncFromNmea() {
 
     if (nmeaGps_.location.isValid()) {
         cachedLocation_.isValid = true;
+        cachedLocation_.isLbsFallback = false;
         cachedLocation_.altitude = nmeaGps_.altitude.isValid() ? static_cast<float>(nmeaGps_.altitude.meters()) : 0.0f;
         cachedLocation_.speed = nmeaGps_.speed.isValid() ? static_cast<float>(nmeaGps_.speed.kmph()) : 0.0f;
         cachedLocation_.course = nmeaGps_.course.isValid() ? static_cast<float>(nmeaGps_.course.deg()) : 0.0f;
         cachedLocation_.satellites = (satellitesUsed_ > 0) ? satellitesUsed_ : satellitesInView_;
         float hdop = nmeaGps_.hdop.isValid() ? static_cast<float>(nmeaGps_.hdop.hdop()) : 99.9f;
         applyDriftAndTowFilter(nmeaGps_.location.lat(), nmeaGps_.location.lng(), cachedLocation_.speed, hdop);
+        applyLbsToCachedLocation(true);
     } else {
         cachedLocation_.isValid = false;
+        cachedLocation_.isLbsFallback = false;
         cachedLocation_.latitude = 0.0;
         cachedLocation_.longitude = 0.0;
         cachedLocation_.altitude = 0.0f;
         cachedLocation_.speed = 0.0f;
         cachedLocation_.course = 0.0f;
         cachedLocation_.satellites = (satellitesInView_ > 0) ? satellitesInView_ : satellitesUsed_;
+        applyLbsToCachedLocation(false);
     }
 }
 
@@ -154,6 +212,7 @@ std::string Sim7000Modem::autoResolveCarrierApn() {
     }
 
     String imsiResp = sendATCommandWithReply("AT+CIMI", 1200);
+    extractDigitsMccMnc(imsiResp, mcc_, mnc_);
     for (size_t i = 0; i < sizeof(kCarrierApnTable) / sizeof(kCarrierApnTable[0]); ++i) {
         if (imsiResp.indexOf(kCarrierApnTable[i].mccMncPrefix) != -1) {
             simPresent_ = true;
@@ -304,6 +363,7 @@ void Sim7000Modem::pollCellularHealth() {
     bool registeredHome = (cregResp.indexOf(",1") != -1);
     bool registeredRoaming = (cregResp.indexOf(",5") != -1);
     roaming_ = registeredRoaming;
+    parseRegLacCellId(cregResp, lac_, cellId_);
 
     if (lastCsq_ >= 12 && (csq == 0 || csq == 99) && !registeredHome && !registeredRoaming) {
         jammingDetected_ = true;
@@ -315,6 +375,147 @@ void Sim7000Modem::pollCellularHealth() {
 
     cachedLocation_.jammingDetected = jammingDetected_;
     cachedLocation_.roaming = roaming_;
+    pollCellularLbs(!cachedLocation_.isValid || cachedLocation_.isLbsFallback);
+}
+
+void Sim7000Modem::pollCellularLbs(bool requestCoordinatesIfNoGnss) {
+    if (!isReady_) return;
+    const unsigned long now = millis();
+    if (lastLbsQueryMs_ != 0 && (now - lastLbsQueryMs_ < 25000UL) &&
+        (!requestCoordinatesIfNoGnss || hasLbsCoords_)) {
+        return;
+    }
+    lastLbsQueryMs_ = now;
+
+    if (mcc_ == 0) {
+        String imsiResp = sendATCommandWithReply("AT+CIMI", 900);
+        extractDigitsMccMnc(imsiResp, mcc_, mnc_);
+    }
+
+    // 1. Consultar información de celda servidora (+CPSI? en SIM7000G)
+    // Ejemplo LTE-M: +CPSI: LTE CAT-M1,Online,370-02,0x1A2B,12345678,120,...
+    // Ejemplo GSM:   +CPSI: GSM,Online,370-02,0x1A2B,12345,45 EGSM 900,-72,0,...
+    String cpsiResp = sendATCommandWithReply("AT+CPSI?", 800);
+    int cpsiIdx = cpsiResp.indexOf("+CPSI:");
+    if (cpsiIdx != -1) {
+        int lineEnd = cpsiResp.indexOf('\n', cpsiIdx);
+        String line = (lineEnd != -1) ? cpsiResp.substring(cpsiIdx + 6, lineEnd)
+                                      : cpsiResp.substring(cpsiIdx + 6);
+        line.trim();
+        std::vector<String> tokens;
+        int start = 0;
+        while (start <= (int)line.length()) {
+            int comma = line.indexOf(',', start);
+            if (comma == -1) {
+                tokens.push_back(line.substring(start));
+                break;
+            }
+            tokens.push_back(line.substring(start, comma));
+            start = comma + 1;
+        }
+        if (tokens.size() >= 5) {
+            int dash = tokens[2].indexOf('-');
+            if (dash > 0) {
+                int parsedMcc = tokens[2].substring(0, dash).toInt();
+                int parsedMnc = tokens[2].substring(dash + 1).toInt();
+                if (parsedMcc > 0) {
+                    mcc_ = parsedMcc;
+                    mnc_ = parsedMnc;
+                }
+            }
+            String lacTok = tokens[3];
+            lacTok.trim();
+            uint32_t parsedLac = (lacTok.startsWith("0x") || lacTok.startsWith("0X"))
+                                     ? static_cast<uint32_t>(std::strtoul(lacTok.c_str() + 2, nullptr, 16))
+                                     : static_cast<uint32_t>(std::strtoul(lacTok.c_str(), nullptr, 10));
+            uint32_t parsedCi = static_cast<uint32_t>(std::strtoul(tokens[4].c_str(), nullptr, 10));
+            if (parsedCi > 0) {
+                lac_ = parsedLac;
+                cellId_ = parsedCi;
+            }
+        }
+    }
+
+    // 2. Fallback a registros extendidos (+CEREG? / +CGREG? / +CREG? con formato =2)
+    if (cellId_ == 0) {
+        uint32_t regLac = 0, regCi = 0;
+        if (parseRegLacCellId(sendATCommandWithReply("AT+CEREG?", 600), regLac, regCi) ||
+            parseRegLacCellId(sendATCommandWithReply("AT+CGREG?", 600), regLac, regCi) ||
+            parseRegLacCellId(sendATCommandWithReply("AT+CREG?", 600), regLac, regCi)) {
+            lac_ = regLac;
+            cellId_ = regCi;
+        }
+    }
+
+    // 3. Si no hay fix satelital GNSS, resolver coordenadas LBS de estación base (AT+CLBS=1,1 / AT+CIPGSMLOC=1,1)
+    if (requestCoordinatesIfNoGnss) {
+        String clbs = sendATCommandWithReply("AT+CLBS=1,1", 2500);
+        int clbsIdx = clbs.indexOf("+CLBS:");
+        if (clbsIdx != -1) {
+            int lineEnd = clbs.indexOf('\n', clbsIdx);
+            String line = (lineEnd != -1) ? clbs.substring(clbsIdx + 6, lineEnd)
+                                          : clbs.substring(clbsIdx + 6);
+            line.trim();
+            int c1 = line.indexOf(',');
+            int c2 = (c1 != -1) ? line.indexOf(',', c1 + 1) : -1;
+            int c3 = (c2 != -1) ? line.indexOf(',', c2 + 1) : -1;
+            if (c1 != -1 && c2 != -1) {
+                int code = line.substring(0, c1).toInt();
+                double lat = line.substring(c1 + 1, c2).toDouble();
+                double lon = (c3 != -1) ? line.substring(c2 + 1, c3).toDouble()
+                                        : line.substring(c2 + 1).toDouble();
+                int acc = (c3 != -1) ? line.substring(c3 + 1).toInt() : 500;
+                if (code == 0 && (std::fabs(lat) > 0.0001 || std::fabs(lon) > 0.0001)) {
+                    lbsLat_ = lat;
+                    lbsLon_ = lon;
+                    lbsAccuracyM_ = (acc > 0) ? acc : 500;
+                    hasLbsCoords_ = true;
+                    return;
+                }
+            }
+        }
+
+        String gsmLoc = sendATCommandWithReply("AT+CIPGSMLOC=1,1", 2500);
+        int locIdx = gsmLoc.indexOf("+CIPGSMLOC:");
+        if (locIdx != -1) {
+            int lineEnd = gsmLoc.indexOf('\n', locIdx);
+            String line = (lineEnd != -1) ? gsmLoc.substring(locIdx + 11, lineEnd)
+                                          : gsmLoc.substring(locIdx + 11);
+            line.trim();
+            int c1 = line.indexOf(',');
+            int c2 = (c1 != -1) ? line.indexOf(',', c1 + 1) : -1;
+            int c3 = (c2 != -1) ? line.indexOf(',', c2 + 1) : -1;
+            if (c1 != -1 && c2 != -1 && c3 != -1) {
+                int code = line.substring(0, c1).toInt();
+                double lon = line.substring(c1 + 1, c2).toDouble();
+                double lat = line.substring(c2 + 1, c3).toDouble();
+                if (code == 0 && (std::fabs(lat) > 0.0001 || std::fabs(lon) > 0.0001)) {
+                    lbsLat_ = lat;
+                    lbsLon_ = lon;
+                    lbsAccuracyM_ = 500;
+                    hasLbsCoords_ = true;
+                }
+            }
+        }
+    }
+}
+
+void Sim7000Modem::applyLbsToCachedLocation(bool hasSatelliteFix) {
+    cachedLocation_.lbsValid = (mcc_ > 0 && cellId_ > 0) || hasLbsCoords_;
+    cachedLocation_.mcc = mcc_;
+    cachedLocation_.mnc = mnc_;
+    cachedLocation_.lac = lac_;
+    cachedLocation_.cellId = cellId_;
+    cachedLocation_.lbsAccuracyM = lbsAccuracyM_;
+
+    if (!hasSatelliteFix && hasLbsCoords_) {
+        cachedLocation_.isValid = true;
+        cachedLocation_.isLbsFallback = true;
+        cachedLocation_.latitude = lbsLat_;
+        cachedLocation_.longitude = lbsLon_;
+        cachedLocation_.driftFiltered = false;
+        cachedLocation_.towDetected = false;
+    }
 }
 
 bool Sim7000Modem::probeAtOrNmea(uint32_t baud, uint8_t rxPin, uint8_t txPin, int attempts, unsigned long timeoutMs) {
@@ -462,6 +663,9 @@ void Sim7000Modem::configureGnssAt() {
     sendATCommand("AT+CFUN=1", "OK", 1000);    // Funcionalidad completa
     sendATCommand("AT+CMGF=1", "OK", 500);     // Modo SMS texto
     sendATCommand("AT+CSCS=\"GSM\"", "OK", 500);
+    sendATCommand("AT+CREG=2", "OK", 500);
+    sendATCommand("AT+CGREG=2", "OK", 500);
+    sendATCommand("AT+CEREG=2", "OK", 500);
 
     // Configurar contexto PDP y APN celular (con auto-resolución MCC/MNC apn.bin si está vacío)
     if (apn_.empty()) {
@@ -736,6 +940,7 @@ void Sim7000Modem::parseGnssInf(const String& line) {
 
     if (fixStatus == 1 && tokens.size() >= 8 && !tokens[3].isEmpty() && !tokens[4].isEmpty()) {
         cachedLocation_.isValid = true;
+        cachedLocation_.isLbsFallback = false;
         if (!tokens[2].isEmpty()) cachedLocation_.timestamp = tokens[2].c_str();
         double rawLat = tokens[3].toDouble();
         double rawLon = tokens[4].toDouble();
@@ -745,16 +950,21 @@ void Sim7000Modem::parseGnssInf(const String& line) {
         cachedLocation_.satellites = (satellitesUsed_ > 0) ? satellitesUsed_ : satellitesInView_;
         float hdop = (tokens.size() > 10 && !tokens[10].isEmpty()) ? tokens[10].toFloat() : 99.9f;
         applyDriftAndTowFilter(rawLat, rawLon, cachedLocation_.speed, hdop);
+        pollCellularHealth();
+        applyLbsToCachedLocation(true);
     } else {
         cachedLocation_.isValid = false;
+        cachedLocation_.isLbsFallback = false;
         cachedLocation_.latitude = 0.0;
         cachedLocation_.longitude = 0.0;
         cachedLocation_.altitude = 0.0f;
         cachedLocation_.speed = 0.0f;
         cachedLocation_.course = 0.0f;
         cachedLocation_.satellites = satellitesInView_;
+        pollCellularHealth();
+        pollCellularLbs(true);
+        applyLbsToCachedLocation(false);
     }
-    pollCellularHealth();
 }
 
 void Sim7000Modem::readData(domain::GpsLocation& out) {
@@ -821,9 +1031,17 @@ void Sim7000Modem::diagnose() {
         Serial.printf("Ultimo +CGNSINF:         %s\n", lastCgnsInfRaw_.c_str());
     }
     if (cachedLocation_.isValid) {
-        Serial.printf("Latitud: %.6f, Longitud: %.6f\n", cachedLocation_.latitude, cachedLocation_.longitude);
+        Serial.printf("Latitud: %.6f, Longitud: %.6f (%s)\n",
+                      cachedLocation_.latitude, cachedLocation_.longitude,
+                      cachedLocation_.isLbsFallback ? "LBS Celular" : "GNSS Satelital");
         Serial.printf("Altitud: %.1f m, Velocidad: %.1f km/h, Rumbo: %.1f deg\n",
                       cachedLocation_.altitude, cachedLocation_.speed, cachedLocation_.course);
+    }
+    if (cachedLocation_.lbsValid) {
+        Serial.printf("Celda LBS (MCC-MNC-LAC-CID): %d-%d-%u-%u (Prec: %d m)\n",
+                      cachedLocation_.mcc, cachedLocation_.mnc,
+                      (unsigned)cachedLocation_.lac, (unsigned)cachedLocation_.cellId,
+                      cachedLocation_.lbsAccuracyM);
     }
     if (isReady_) {
         String csq = sendATCommandWithReply("AT+CSQ", 800);
@@ -847,11 +1065,16 @@ bool Sim7000Modem::sendAlert(const domain::AccidentEvent& accident,
     msg += "Hora: " + timestamp + "\n";
 
     if (gps.isValid) {
-        msg += "Ubicacion: https://maps.google.com/?q=" +
+        msg += std::string(gps.isLbsFallback ? "Ubicacion(LBS): " : "Ubicacion: ") +
+               "https://maps.google.com/?q=" +
                std::to_string(gps.latitude) + "," + std::to_string(gps.longitude) + "\n";
         msg += "Velocidad: " + std::to_string((int)gps.speed) + " km/h\n";
     } else {
         msg += "GPS: Sin fix satelital\n";
+    }
+    if (gps.lbsValid && gps.cellId > 0) {
+        msg += "Celda LBS: " + std::to_string(gps.mcc) + "-" + std::to_string(gps.mnc) + "-" +
+               std::to_string(gps.lac) + "-" + std::to_string(gps.cellId) + "\n";
     }
 
     if (accident.rollover_detected) {

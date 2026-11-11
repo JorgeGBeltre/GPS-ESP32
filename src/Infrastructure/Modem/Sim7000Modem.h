@@ -71,6 +71,10 @@ public:
     bool isApnAutoDetected() const { return apnAutoDetected_; }
     bool isCellularConnected() const { return cellularConnected_; }
     const std::string& resolvedApn() const { return resolvedApn_; }
+    int mcc() const { return mcc_; }
+    int mnc() const { return mnc_; }
+    uint32_t lac() const { return lac_; }
+    uint32_t cellId() const { return cellId_; }
 
 private:
     bool sendATCommand(const String& cmd, const String& expectedResponse, unsigned long timeoutMs = 2000);
@@ -80,6 +84,8 @@ private:
     std::string autoResolveCarrierApn();
     void applyDriftAndTowFilter(double rawLat, double rawLon, float speedKmh, float hdop);
     void pollCellularHealth();
+    void pollCellularLbs(bool requestCoordinatesIfNoGnss);
+    void applyLbsToCachedLocation(bool hasSatelliteFix);
     void configureGnssAt();
     void queryGnss();
     void parseGnssInf(const String& line);
@@ -111,6 +117,7 @@ private:
     unsigned long   lastReadyCheckMs_ = 0;
     unsigned long   lastWarningMs_ = 0;
     unsigned long   lastCellCheckMs_ = 0;
+    unsigned long   lastLbsQueryMs_ = 0;
 
     domain::GpsLocation cachedLocation_;
     bool                hasAnchor_ = false;
@@ -119,6 +126,14 @@ private:
     int                 lastCsq_ = 0;
     bool                jammingDetected_ = false;
     bool                roaming_ = false;
+    int                 mcc_ = 0;
+    int                 mnc_ = 0;
+    uint32_t            lac_ = 0;
+    uint32_t            cellId_ = 0;
+    bool                hasLbsCoords_ = false;
+    double              lbsLat_ = 0.0;
+    double              lbsLon_ = 0.0;
+    int                 lbsAccuracyM_ = 0;
     int                 satellitesInView_ = 0;
     int                 satellitesUsed_ = 0;
     int                 gsvSatsGps_ = 0;

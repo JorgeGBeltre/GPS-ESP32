@@ -144,6 +144,10 @@ std::string ArduinoJsonPayloadSerializer::formatAccidentAlert(
 
     JsonObject gpsObj = details.createNestedObject("gps");
     gpsObj["valid"] = event.location.isValid;
+    gpsObj["positioning_source"] = event.location.isValid
+                                       ? (event.location.isLbsFallback ? "LBS" : "GPS")
+                                       : (event.location.lbsValid ? "LBS_CELL_ID" : "NONE");
+    gpsObj["lbs_fallback"] = event.location.isLbsFallback;
     gpsObj["latitude"] = event.location.latitude;
     gpsObj["longitude"] = event.location.longitude;
     gpsObj["speed_kmph"] = event.location.speed;
@@ -156,6 +160,21 @@ std::string ArduinoJsonPayloadSerializer::formatAccidentAlert(
     gpsObj["virtual_ignition"] = event.location.virtualIgnition;
     gpsObj["jamming_detected"] = event.location.jammingDetected;
     gpsObj["roaming"] = event.location.roaming;
+    if (event.location.lbsValid) {
+        JsonObject lbs = gpsObj.createNestedObject("lbs");
+        lbs["mcc"] = event.location.mcc;
+        lbs["mnc"] = event.location.mnc;
+        lbs["lac"] = event.location.lac;
+        lbs["cell_id"] = event.location.cellId;
+        if (event.location.lbsAccuracyM > 0) {
+            lbs["accuracy_m"] = event.location.lbsAccuracyM;
+        }
+        char cellKey[48];
+        snprintf(cellKey, sizeof(cellKey), "%d-%d-%u-%u",
+                 event.location.mcc, event.location.mnc,
+                 (unsigned)event.location.lac, (unsigned)event.location.cellId);
+        lbs["cell_key"] = cellKey;
+    }
 
     String output;
     serializeJson(doc, output);
@@ -167,7 +186,7 @@ std::string ArduinoJsonPayloadSerializer::formatGpsTelemetry(
     const domain::GpsLocation& gps,
     const std::string& timestamp) {
 
-    DynamicJsonDocument doc(1536);
+    DynamicJsonDocument doc(2048);
 
     JsonObject dev = doc.createNestedObject("Device");
     dev["status"] = "operational";
@@ -181,6 +200,10 @@ std::string ArduinoJsonPayloadSerializer::formatGpsTelemetry(
 
     JsonObject gpsObj = details.createNestedObject("gps");
     gpsObj["valid"] = gps.isValid;
+    gpsObj["positioning_source"] = gps.isValid
+                                       ? (gps.isLbsFallback ? "LBS" : "GPS")
+                                       : (gps.lbsValid ? "LBS_CELL_ID" : "NONE");
+    gpsObj["lbs_fallback"] = gps.isLbsFallback;
     gpsObj["latitude"] = gps.latitude;
     gpsObj["longitude"] = gps.longitude;
     gpsObj["speed_kmph"] = gps.speed;
@@ -193,6 +216,20 @@ std::string ArduinoJsonPayloadSerializer::formatGpsTelemetry(
     gpsObj["virtual_ignition"] = gps.virtualIgnition;
     gpsObj["jamming_detected"] = gps.jammingDetected;
     gpsObj["roaming"] = gps.roaming;
+    if (gps.lbsValid) {
+        JsonObject lbs = gpsObj.createNestedObject("lbs");
+        lbs["mcc"] = gps.mcc;
+        lbs["mnc"] = gps.mnc;
+        lbs["lac"] = gps.lac;
+        lbs["cell_id"] = gps.cellId;
+        if (gps.lbsAccuracyM > 0) {
+            lbs["accuracy_m"] = gps.lbsAccuracyM;
+        }
+        char cellKey[48];
+        snprintf(cellKey, sizeof(cellKey), "%d-%d-%u-%u",
+                 gps.mcc, gps.mnc, (unsigned)gps.lac, (unsigned)gps.cellId);
+        lbs["cell_key"] = cellKey;
+    }
 
     String output;
     serializeJson(doc, output);

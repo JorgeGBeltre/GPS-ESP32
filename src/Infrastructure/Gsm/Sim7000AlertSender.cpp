@@ -53,11 +53,16 @@ bool Sim7000AlertSender::sendAlert(const domain::AccidentEvent& accident,
     msg += "Hora: " + timestamp + "\n";
 
     if (gps.isValid) {
-        msg += "Ubicacion: https://maps.google.com/?q=" +
+        msg += std::string(gps.isLbsFallback ? "Ubicacion(LBS): " : "Ubicacion: ") +
+               "https://maps.google.com/?q=" +
                std::to_string(gps.latitude) + "," + std::to_string(gps.longitude) + "\n";
         msg += "Velocidad: " + std::to_string((int)gps.speed) + " km/h\n";
     } else {
         msg += "GPS: Sin fix satelital\n";
+    }
+    if (gps.lbsValid && gps.cellId > 0) {
+        msg += "Celda LBS: " + std::to_string(gps.mcc) + "-" + std::to_string(gps.mnc) + "-" +
+               std::to_string(gps.lac) + "-" + std::to_string(gps.cellId) + "\n";
     }
 
     if (accident.rollover_detected) {

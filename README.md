@@ -104,6 +104,7 @@ The firmware combines high-frequency GPS positioning (`TinyGPSPlus`), 6-axis ine
 | **Speed-Safe Immobilizer Cutoff (`GTDOS` / `GTGDO`)** | Defers remote relay cutoff commands (`requestSpeedSafeCutoff`, `evaluatePendingSpeedSafeCutoff`) when vehicle GNSS speed exceeds `safeCutoffSpeedKmh_` (`20.0 km/h` default) and executes the cutoff automatically once speed drops safely |
 | **Static Drift Filter, Tow & Harsh Cornering (`GTRDF` / `GTTOW` / `GTHBM`)** | Stationary coordinate pinning (`30 m` radius at `< 3.0 km/h`), parked tow detection (`>= 100 m`), virtual ignition (`GTVVS`/`GTAVS`), and lateral harsh cornering (`>= 0.45g` at `>= 15 km/h`) |
 | **MCC/MNC Auto-APN & Jamming/Roaming Detection (`GTJDC` / `GTRMD`)** | Auto-resolves carrier APN from `AT+CPIN?` / `AT+CIMI` (IMSI MCC/MNC table) / `AT+CGNAPN` / `AT+CGDCONT?` without hardcoded APN defaults and monitors `AT+CSQ` + `AT+CREG?` for cellular RF jamming and roaming |
+| **Cellular LBS & Cell ID Positioning (`AT+CPSI?` / `AT+CEREG=2` / `AT+CLBS=1,1` / `AT+CIPGSMLOC=1,1`)** | Extracts LTE-M / NB-IoT / GSM serving cell tower identity (`mcc`, `mnc`, `lac`, `cell_id`, `cell_key`) via `AT+CPSI?` and extended `+CEREG?` / `+CGREG?` / `+CREG?` (`=2`), falls back to SIM7000G base-station coordinates (`AT+CLBS=1,1` / `AT+CIPGSMLOC=1,1`, `positioning_source = "LBS"` / `"LBS_CELL_ID"`, `lbs_fallback = true`) when satellite GNSS fix is unavailable, and includes `lbs` metadata across `telemetry/<ChipID>/gps`, `telemetry/<ChipID>/accidents`, `diagnose_gps`, and emergency SMS alerts |
 | **Family Identity & Dynamic `credential_mode`** | Broadcasts 7-byte VESIS BLE Manufacturer Data (`0xFFFF` `'V','S'`, `device_code = 0x02`) and exposes `device_family = "gps_esp32"` with dynamic `credential_mode` (`"apn"` vs `"adopt_only"` when SIM7000G auto-detects APN or Wi-Fi is active while unbound) for 1-tap account adoption |
 | **Account Binding & Cryptographic Unlink (`account_bound`)** | Persists `acct_bound` in NVS to distinguish temporary Wi-Fi/LTE outages from verified account removal (`devices/<ChipID>/unlink/command`, MQTT 5.0 `0x87` `ACCOUNT_UNLINKED:<proof>`, or `POST /zeroconf/unlink` validated via `SHA256(deviceKey + ":UNLINK:" + chipId)[0..31]`) |
 | **Native MQTT 5.0 + Secure OTA** | Powered by `ESP32_MQTTv5` (`v1.0.7`) and `MQTTOTAv5` (`v1.0.3`) with `{ChipID}`-scoped topics, strict packet/property bounds validation, automatic plain TCP (`:1883`) vs TLS (`:8883`) selection, and `SHA-256` / `HMAC-SHA256` verification |
@@ -171,7 +172,7 @@ The firmware combines high-frequency GPS positioning (`TinyGPSPlus`), 6-axis ine
 - Local LAN Zeroconf Server ([`LanZeroconfServer.h`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS-ESP32/src/Infrastructure/Net/LanZeroconfServer.h), [`LanZeroconfServer.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS-ESP32/src/Infrastructure/Net/LanZeroconfServer.cpp)):
   - `loop()`, `notifyMdnsStateChange()`, `startServer()`, `stopServer()`, `registerEndpoint()`, `dispatchZeroconf()`.
 - `Sim7000Modem` ([`Sim7000Modem.h`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS-ESP32/src/Infrastructure/Modem/Sim7000Modem.h), [`Sim7000Modem.cpp`](file:///c:/Users/Jorge/Music/interruptor%20wifi/GPS-ESP32/src/Infrastructure/Modem/Sim7000Modem.cpp)):
-  - `autoResolveCarrierApn()` (MCC/MNC IMSI carrier APN lookup), `applyDriftAndTowFilter()` (`GTRDF` static coordinate pinning + `GTTOW` parked tow alarm), and `pollCellularHealth()` (`GTJDC` RF jamming + `GTRMD` roaming detection).
+  - `autoResolveCarrierApn()` (MCC/MNC IMSI carrier APN lookup), `pollCellularLbs()` / `applyLbsToCachedLocation()` (LTE-M/NB-IoT/GSM Cell ID `mcc`/`mnc`/`lac`/`cellId` via `AT+CPSI?` and `+CEREG=2`/`+CGREG=2`/`+CREG=2` plus base-station coordinate fallback via `AT+CLBS=1,1` and `AT+CIPGSMLOC=1,1`), `applyDriftAndTowFilter()` (`GTRDF` static coordinate pinning + `GTTOW` parked tow alarm), and `pollCellularHealth()` (`GTJDC` RF jamming + `GTRMD` roaming detection).
 
 ---
 
@@ -709,13 +710,23 @@ Published periodically to `telemetry/<ChipID>/gps`:
   "timestamp": "2026-10-28T05:00:00.000Z",
   "gps": {
     "valid": true,
+    "positioning_source": "GPS",
+    "lbs_fallback": false,
     "lat": 18.486058,
     "lng": -69.931211,
     "altitude_m": 42.5,
     "speed_kmh": 48.2,
     "course_deg": 135.4,
     "hdop": 0.9,
-    "satellites": 9
+    "satellites": 9,
+    "lbs": {
+      "mcc": "370",
+      "mnc": "02",
+      "lac": "01A4",
+      "cell_id": "003B9AC9",
+      "accuracy_m": 0.0,
+      "cell_key": "370-02-01A4-003B9AC9"
+    }
   }
 }
 ```
@@ -737,9 +748,20 @@ Published immediately with QoS 1 to `telemetry/<ChipID>/accidents`:
     "speed_kmh": 62.1
   },
   "location": {
+    "valid": true,
+    "positioning_source": "GPS",
+    "lbs_fallback": false,
     "lat": 18.486120,
     "lng": -69.931450,
-    "maps_url": "https://maps.google.com/?q=18.486120,-69.931450"
+    "maps_url": "https://maps.google.com/?q=18.486120,-69.931450",
+    "lbs": {
+      "mcc": "370",
+      "mnc": "02",
+      "lac": "01A4",
+      "cell_id": "003B9AC9",
+      "accuracy_m": 0.0,
+      "cell_key": "370-02-01A4-003B9AC9"
+    }
   },
   "sms_dispatched": true
 }

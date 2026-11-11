@@ -20,6 +20,15 @@ struct GpsLocation {
     bool        jammingDetected = false;
     bool        roaming = false;
     std::string timestamp;
+
+    // LBS (Location-Based Service / Cell ID positioning)
+    bool        lbsValid = false;
+    bool        isLbsFallback = false;
+    int         mcc = 0;
+    int         mnc = 0;
+    uint32_t    lac = 0;
+    uint32_t    cellId = 0;
+    int         lbsAccuracyM = 0;
 };
 
 } // namespace relay::domain
