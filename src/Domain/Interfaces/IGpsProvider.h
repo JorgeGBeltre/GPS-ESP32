@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include "Domain/Entities/GpsLocation.h"
 
 namespace relay::domain {
@@ -15,6 +16,7 @@ public:
     virtual int getSatellites() = 0;
     virtual bool hasFix() = 0;
     virtual void diagnose() = 0;
+    virtual uint16_t modemRecoveries() const { return 0; }
 };
 
 } // namespace relay::domain

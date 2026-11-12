@@ -66,7 +66,7 @@ void initMQTT(const char* server, uint16_t port,
     mqtt.setBufferSize(4096);
     mqtt.setKeepAlive(60);
     mqtt.setCleanStart(false);
-    mqtt.setAutoReconnect(true, 1000, 30000);
+    mqtt.setAutoReconnect(false); // Reconexión exponencial centralizada en RelayFirmwareController
     mqtt.setSessionExpiry(3600);
 
     MQTTProperties willProps;
@@ -134,7 +134,9 @@ void initMQTT(const char* server, uint16_t port,
 
 bool connectMQTT() {
     if (mqtt.connected()) return true;
+    if (!hasValidBrokerCredentials()) return false;
 
+    mqtt.begin(getActiveNetworkClient(), g_server.c_str(), g_port);
     Serial.printf("[MQTT5] Conectando a %s:%d como %s...\n",
                   g_server.c_str(), g_port, g_clientId.c_str());
 

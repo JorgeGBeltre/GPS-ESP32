@@ -44,6 +44,9 @@ public:
     int getSatellites() override;
     bool hasFix() override;
     void diagnose() override;
+    uint16_t modemRecoveries() const override { return modemRecoveries_; }
+    void setOtaActive(bool active) { otaActive_ = active; }
+    void recoverUnresponsiveModem();
 
     // IGsmAlertSender overrides
     void begin(const std::string& authCode) override;
@@ -144,6 +147,12 @@ private:
     bool                apnAutoDetected_ = false;
     bool                cellularConnected_ = false;
     std::string         resolvedApn_;
+    bool                towLatched_ = false;
+    bool                otaActive_ = false;
+    uint8_t             consecutiveAtFailures_ = 0;
+    uint8_t             unreadyProbeCount_ = 0;
+    uint16_t            modemRecoveries_ = 0;
+    unsigned long       lastModemRecoveryMs_ = 0;
 };
 
 } // namespace relay::infra

@@ -10,6 +10,7 @@
 #include "Domain/Interfaces/IIndicator.h"
 #include "Infrastructure/Config/config.h"
 #include "Infrastructure/Config/nvs_config.h"
+#include "Infrastructure/System/EspSystemControl.h"
 
 namespace relay::infra {
 
@@ -301,6 +302,7 @@ public:
             Serial.printf("[PROVISION] Credenciales guardadas en NVS (SSID: %s, APN: %s). Reiniciando...\n",
                           config.wifi_ssid.c_str(), config.apn.c_str());
             delay(200);
+            EspSystemControl::markGracefulReboot();
             ESP.restart();
             return true;
         }

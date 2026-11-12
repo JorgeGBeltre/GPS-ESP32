@@ -76,10 +76,12 @@ static void executeFactoryUnlinkToQuickPairing() {
   resetConfig();
   WiFi.disconnect(true, true);
   delay(200);
+  infra::EspSystemControl::markGracefulReboot();
   ESP.restart();
 }
 
 static void runPairingWorkflow(bool isInitialUnprovisionedBoot) {
+  infra::EspSystemControl::setWatchdogPaused(true);
   g_sim7000.probeCellularProvisioningState();
   Serial.println(
       "[PAIRING] Entrando en Etapa 1: Quick Pairing (BLE + SmartConfig)...");
@@ -90,6 +92,7 @@ static void runPairingWorkflow(bool isInitialUnprovisionedBoot) {
     Serial.println(
         "[PAIRING] Credenciales recibidas en Quick Pairing. Reiniciando...");
     delay(400);
+    infra::EspSystemControl::markGracefulReboot();
     ESP.restart();
     return;
   }
@@ -97,6 +100,7 @@ static void runPairingWorkflow(bool isInitialUnprovisionedBoot) {
   if (res == QuickPairingResult::CancelledByButton) {
     Serial.println("[PAIRING] Emparejamiento cancelado por pulsación corta. "
                    "Retomando operación normal.");
+    infra::EspSystemControl::setWatchdogPaused(false);
     return;
   }
 
@@ -105,10 +109,12 @@ static void runPairingWorkflow(bool isInitialUnprovisionedBoot) {
         "[PAIRING] Entrando en Etapa 2: Compatible SoftAP (GPS-<ChipID>)...");
     infra::WifiApProvisioningPortal::startPortal(180, &g_indicator, &g_button1);
   }
+  infra::EspSystemControl::setWatchdogPaused(false);
 }
 
 void setup() {
   Serial.begin(115200);
+  infra::EspSystemControl::initBootAndWatchdog();
 
   auto identity = g_deviceRepo.identity();
   g_configRepo.begin(identity.chipId.c_str());
@@ -268,6 +274,9 @@ void loop() {
       g_sim7000.enableGnss(true);
     }
   }
+
+  infra::EspSystemControl::heartbeat();
+  g_sim7000.setOtaActive(g_ota.isInProgress());
 
   if (g_controller) {
     g_controller->tick();

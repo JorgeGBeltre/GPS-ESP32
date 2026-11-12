@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <string>
 
@@ -20,6 +21,7 @@ public:
     virtual void subscribe(const std::string& topic) = 0;
     virtual void onMessage(MessageHandler handler) = 0;
     virtual void onConnect(std::function<void()> cb) = 0;
+    virtual size_t queuedCount() const { return 0; }
 
     virtual void loop() = 0;
 };

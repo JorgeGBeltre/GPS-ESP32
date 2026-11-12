@@ -1,5 +1,6 @@
 #include "Infrastructure/Modem/Sim7000Modem.h"
 #include "Infrastructure/Config/nvs_config.h"
+#include "Infrastructure/System/EspSystemControl.h"
 #include <cmath>
 #include <cstdlib>
 
@@ -331,14 +332,18 @@ void Sim7000Modem::applyDriftAndTowFilter(double rawLat, double rawLon, float sp
         cachedLocation_.latitude = anchorLat_;
         cachedLocation_.longitude = anchorLon_;
         cachedLocation_.driftFiltered = true;
+        towLatched_ = false;
     } else {
         cachedLocation_.latitude = rawLat;
         cachedLocation_.longitude = rawLon;
-        // Parked Tow Detection (GTTOW): displacement >= 100 m at low/parked speed
-        if (speedKmh < 8.0f && distFromAnchorM >= 100.0) {
-            cachedLocation_.towDetected = true;
+        // Parked Tow Detection (GTTOW) with +20 m exit hysteresis (100 m set, < 80 m or >= 8 km/h clear)
+        if (speedKmh >= 8.0f || distFromAnchorM < 80.0) {
+            towLatched_ = false;
+        } else if (speedKmh < 8.0f && distFromAnchorM >= 100.0) {
+            towLatched_ = true;
         }
-        if (speedKmh >= 5.0f || distFromAnchorM > 30.0) {
+        cachedLocation_.towDetected = towLatched_;
+        if (speedKmh >= 5.0f || (!towLatched_ && distFromAnchorM > 30.0)) {
             anchorLat_ = rawLat;
             anchorLon_ = rawLon;
         }
@@ -650,12 +655,30 @@ void Sim7000Modem::powerOff() {
 }
 
 void Sim7000Modem::restartModem() {
+    EspSystemControl::heartbeat();
     powerOff();
     delay(1000);
+    EspSystemControl::heartbeat();
     powerOn();
+    EspSystemControl::heartbeat();
     if (isReady_) {
         configureGnssAt();
     }
+}
+
+void Sim7000Modem::recoverUnresponsiveModem() {
+    if (otaActive_ || pwrKeyPin_ == 0xFF || nmeaMode_) return;
+    const unsigned long now = millis();
+    if (lastModemRecoveryMs_ != 0 && (now - lastModemRecoveryMs_ < 300000UL)) {
+        return;
+    }
+    lastModemRecoveryMs_ = now;
+    modemRecoveries_++;
+    consecutiveAtFailures_ = 0;
+    unreadyProbeCount_ = 0;
+    Serial.printf("[SIM7000] Auto-recuperacion de modem no responsivo (#%u, cooldown 300s)...\n",
+                  (unsigned)modemRecoveries_);
+    restartModem();
 }
 
 void Sim7000Modem::configureGnssAt() {
@@ -811,6 +834,8 @@ void Sim7000Modem::update() {
         if (millis() - lastReadyCheckMs_ >= 10000) {
             lastReadyCheckMs_ = millis();
             if (probeAtOrNmea(baud_, rxPin_, txPin_, 2, 300)) {
+                unreadyProbeCount_ = 0;
+                consecutiveAtFailures_ = 0;
                 if (isReady_) {
                     Serial.println("[SIM7000] Modem AT detectado en segundo plano. Configurando GNSS...");
                     configureGnssAt();
@@ -818,6 +843,8 @@ void Sim7000Modem::update() {
                 return;
             }
             if (baud_ != 9600 && (probeAtOrNmea(9600, rxPin_, txPin_, 1, 300) || listenForNmea(9600, rxPin_, txPin_, 1100))) {
+                unreadyProbeCount_ = 0;
+                consecutiveAtFailures_ = 0;
                 if (isReady_) {
                     Serial.println("[SIM7000] Modem AT detectado a 9600 baud en segundo plano.");
                     sendATCommand("AT+IPR=115200", "OK", 500);
@@ -833,6 +860,10 @@ void Sim7000Modem::update() {
             // Restaurar siempre el baud rate principal tras el sondeo
             serial_.begin(baud_, SERIAL_8N1, rxPin_, txPin_);
             activeBaud_ = baud_;
+            if (++unreadyProbeCount_ >= 18) {
+                unreadyProbeCount_ = 0;
+                recoverUnresponsiveModem();
+            }
         }
         return;
     }
@@ -845,6 +876,7 @@ void Sim7000Modem::update() {
 }
 
 void Sim7000Modem::queryGnss() {
+    EspSystemControl::heartbeat();
     while (serial_.available() > 0) {
         processIncomingByte(static_cast<char>(serial_.read()));
     }
@@ -869,6 +901,16 @@ void Sim7000Modem::queryGnss() {
     }
 
     int idx = response.indexOf("+CGNSINF: ");
+    if (idx != -1 || response.indexOf("OK") != -1) {
+        consecutiveAtFailures_ = 0;
+    } else if (++consecutiveAtFailures_ >= 6) {
+        Serial.println("[SIM7000] Sin respuesta AT durante 6 consultas consecutivas; marcando modem no listo.");
+        isReady_ = false;
+        consecutiveAtFailures_ = 0;
+        recoverUnresponsiveModem();
+        return;
+    }
+
     if (idx != -1) {
         int endIdx = response.indexOf("\r", idx);
         if (endIdx == -1) endIdx = response.indexOf("\n", idx);

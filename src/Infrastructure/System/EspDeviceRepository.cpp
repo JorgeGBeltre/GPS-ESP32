@@ -1,4 +1,5 @@
 #include "Infrastructure/System/EspDeviceRepository.h"
+#include "Infrastructure/System/EspSystemControl.h"
 #include <Arduino.h>
 #include <WiFi.h>
 
@@ -27,6 +28,10 @@ domain::SystemMetrics EspDeviceRepository::metrics() {
     m.uptime = millis();
     m.wifiConnected = (WiFi.status() == WL_CONNECTED);
     m.mqttConnected = false;
+    m.bootCount = EspSystemControl::bootCount();
+    m.unexpectedReboots = EspSystemControl::unexpectedReboots();
+    m.wdtOffences = EspSystemControl::wdtOffences();
+    m.resetReason = EspSystemControl::resetReason();
     return m;
 }
 

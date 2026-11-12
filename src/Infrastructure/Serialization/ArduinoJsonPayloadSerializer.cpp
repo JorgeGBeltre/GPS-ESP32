@@ -29,6 +29,12 @@ std::string ArduinoJsonPayloadSerializer::formatStatus(
     details["rssi"] = metrics.rssi;
     details["free_heap"] = metrics.freeHeap;
     details["uptime"] = metrics.uptime;
+    details["boot_count"] = metrics.bootCount;
+    details["unexpected_reboots"] = metrics.unexpectedReboots;
+    details["wdt_offences"] = metrics.wdtOffences;
+    details["modem_recoveries"] = metrics.modemRecoveries;
+    details["offline_queued"] = metrics.queuedMessages;
+    details["reset_reason"] = metrics.resetReason;
 
     JsonObject devicesObj = details.createNestedObject("devices");
     for (const auto& r : relays) {
@@ -98,6 +104,12 @@ std::string ArduinoJsonPayloadSerializer::formatTelemetry(
     details["rssi"] = metrics.rssi;
     details["free_heap"] = metrics.freeHeap;
     details["uptime"] = metrics.uptime;
+    details["boot_count"] = metrics.bootCount;
+    details["unexpected_reboots"] = metrics.unexpectedReboots;
+    details["wdt_offences"] = metrics.wdtOffences;
+    details["modem_recoveries"] = metrics.modemRecoveries;
+    details["offline_queued"] = metrics.queuedMessages;
+    details["reset_reason"] = metrics.resetReason;
 
     JsonObject relaysObj = details.createNestedObject("relays");
     for (const auto& r : relays) {

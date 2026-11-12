@@ -100,8 +100,11 @@ private:
     unsigned long                  lastTimeSyncMs_ = 0;
     unsigned long                  lastGpsPublishMs_ = 0;
     uint32_t                       lastEvaluatedEpochSec_ = 0;
-    static constexpr unsigned long RECONNECT_INTERVAL_MS = 10000;
+    static constexpr unsigned long RECONNECT_BASE_MS = 5000;
+    static constexpr unsigned long RECONNECT_MAX_MS  = 60000;
+    unsigned long                  reconnectBackoffMs_ = RECONNECT_BASE_MS;
     unsigned long                  lastReconnectAttemptMs_ = 0;
+    uint16_t                       reconnectAttempts_ = 0;
     bool                           hasAttemptedReconnect_ = false;
 };
 

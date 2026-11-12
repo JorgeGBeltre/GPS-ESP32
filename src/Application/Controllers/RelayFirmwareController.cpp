@@ -89,6 +89,8 @@ void RelayFirmwareController::setup(bool relaysAlreadyInitialized) {
 }
 
 void RelayFirmwareController::onMqttConnected() {
+    reconnectBackoffMs_ = RECONNECT_BASE_MS;
+    reconnectAttempts_ = 0;
     log_.info("[CTRL] MQTT conectado: suscribiendo a tópicos...");
 
     connectivity_.transport().subscribe(topics_.commands);
@@ -122,10 +124,8 @@ void RelayFirmwareController::tick() {
         if (onLocalStateChangeCb_) {
             onLocalStateChangeCb_();
         }
-        if (connectivity_.isOnline()) {
-            telemetry_.publishEvent("PULSE_AUTO_OFF", "Pulso finalizado automáticamente", "off");
-            telemetry_.publishRelayState(pulsedDevice);
-        }
+        telemetry_.publishEvent("PULSE_AUTO_OFF", "Pulso finalizado automáticamente", "off");
+        telemetry_.publishRelayState(pulsedDevice);
     }
 
     if (timerScheduler_) {
@@ -136,10 +136,8 @@ void RelayFirmwareController::tick() {
                 if (onLocalStateChangeCb_) {
                     onLocalStateChangeCb_();
                 }
-                if (connectivity_.isOnline()) {
-                    telemetry_.publishEvent("TIMER_TRIGGERED", "Temporizador programado ejecutado");
-                    telemetry_.publishAllRelayStates();
-                }
+                telemetry_.publishEvent("TIMER_TRIGGERED", "Temporizador programado ejecutado");
+                telemetry_.publishAllRelayStates();
             }
         }
     }
@@ -153,11 +151,9 @@ void RelayFirmwareController::tick() {
             if (onLocalStateChangeCb_) {
                 onLocalStateChangeCb_();
             }
-            if (connectivity_.isOnline()) {
-                telemetry_.publishEvent("SPEED_SAFE_CUTOFF_EXECUTED",
-                                        "Corte de relé ejecutado tras descenso a velocidad segura", "off");
-                telemetry_.publishRelayState(safeCutoffDev);
-            }
+            telemetry_.publishEvent("SPEED_SAFE_CUTOFF_EXECUTED",
+                                    "Corte de relé ejecutado tras descenso a velocidad segura", "off");
+            telemetry_.publishRelayState(safeCutoffDev);
         }
     }
     if (accidentService_) {
@@ -176,23 +172,32 @@ void RelayFirmwareController::tick() {
     }
     ota_.handle();
 
-    // 5. Máquina de estados de conectividad red / MQTTv5
+    // 5. Máquina de estados de conectividad red / MQTTv5 (single owner + exponential backoff)
     if (state_ == State::Connecting) {
         updateIndicatorForConnectivity();
-        if (gpsProvider_ && now - lastGpsPublishMs_ >= RECONNECT_INTERVAL_MS) {
+        if (gpsProvider_ && now - lastGpsPublishMs_ >= 10000UL) {
             lastGpsPublishMs_ = now;
             domain::GpsLocation loc;
             gpsProvider_->readData(loc);
         }
 
-        if (!hasAttemptedReconnect_ || now - lastReconnectAttemptMs_ >= RECONNECT_INTERVAL_MS) {
+        if (!hasAttemptedReconnect_ || now - lastReconnectAttemptMs_ >= reconnectBackoffMs_) {
             hasAttemptedReconnect_ = true;
             lastReconnectAttemptMs_ = now;
             if (connectivity_.ensureConnected()) {
+                reconnectBackoffMs_ = RECONNECT_BASE_MS;
+                reconnectAttempts_ = 0;
                 state_ = State::Operational;
                 indicator_.show(domain::IndicatorStatus::Operational);
                 log_.info("[CTRL] Estado -> OPERATIONAL");
             } else {
+                reconnectAttempts_++;
+                unsigned long nextMs = (reconnectBackoffMs_ < RECONNECT_MAX_MS / 2)
+                                           ? (reconnectBackoffMs_ * 2UL)
+                                           : RECONNECT_MAX_MS;
+                nextMs += ((now * 37UL) % 1000UL);
+                if (nextMs > RECONNECT_MAX_MS) nextMs = RECONNECT_MAX_MS;
+                reconnectBackoffMs_ = nextMs;
                 updateIndicatorForConnectivity();
             }
         }
@@ -201,11 +206,9 @@ void RelayFirmwareController::tick() {
             updateIndicatorForConnectivity();
             lastReconnectAttemptMs_ = now;
             hasAttemptedReconnect_ = true;
-            if (!connectivity_.ensureConnected()) {
-                state_ = State::Connecting;
-                updateIndicatorForConnectivity();
-                return;
-            }
+            reconnectBackoffMs_ = RECONNECT_BASE_MS + ((now * 37UL) % 1000UL);
+            state_ = State::Connecting;
+            return;
         }
 
         indicator_.show(domain::IndicatorStatus::Operational);
@@ -242,15 +245,13 @@ void RelayFirmwareController::handleButtonEvents() {
                 onLocalStateChangeCb_();
             }
 
-            if (connectivity_.isOnline()) {
-                const auto* state = relays_.getState(btn.targetDeviceId);
-                std::string stateStr = (state && state->currentState) ? "on" : "off";
-                std::string desc = "Cambio por botón físico - " + btn.targetDeviceId + ": " +
-                                   (state && state->currentState ? "ENCENDIDO" : "APAGADO");
+            const auto* state = relays_.getState(btn.targetDeviceId);
+            std::string stateStr = (state && state->currentState) ? "on" : "off";
+            std::string desc = "Cambio por botón físico - " + btn.targetDeviceId + ": " +
+                               (state && state->currentState ? "ENCENDIDO" : "APAGADO");
 
-                telemetry_.publishEvent("BUTTON_PRESS", desc, stateStr);
-                telemetry_.publishRelayState(btn.targetDeviceId);
-            }
+            telemetry_.publishEvent("BUTTON_PRESS", desc, stateStr);
+            telemetry_.publishRelayState(btn.targetDeviceId);
         } else if (ev == domain::ButtonEvent::LongPress) {
             log_.info("[BUTTON] Pulsación larga (>= 5 s) detectada -> Iniciando emparejamiento");
             if (connectivity_.isOnline()) {

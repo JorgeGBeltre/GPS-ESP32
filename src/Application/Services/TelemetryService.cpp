@@ -10,6 +10,10 @@ void TelemetryService::publishStatus() {
     metrics.wifiConnected = connectivity_.network().isConnected();
     metrics.mqttConnected = connectivity_.transport().isConnected();
     metrics.rssi = connectivity_.activeRssi();
+    metrics.queuedMessages = static_cast<uint16_t>(connectivity_.transport().queuedCount());
+    if (gpsProvider_) {
+        metrics.modemRecoveries = gpsProvider_->modemRecoveries();
+    }
 
     std::string timestamp = timeProvider_.isoTimestamp();
     std::string payload = serializer_.formatStatus(id, metrics, relays_.getAllStates(),
@@ -22,20 +26,17 @@ void TelemetryService::publishStatus() {
 void TelemetryService::publishEvent(const std::string& name,
                                     const std::string& description,
                                     const std::string& state) {
-    if (!connectivity_.transport().isConnected()) return;
-
     auto id = deviceRepo_.identity();
     domain::DeviceEvent ev{name, description, state};
     std::string timestamp = timeProvider_.isoTimestamp();
 
-    std::string payload = serializer_.formatEvent(id, ev, timestamp, true);
+    const bool online = connectivity_.transport().isConnected();
+    std::string payload = serializer_.formatEvent(id, ev, timestamp, online);
     connectivity_.transport().publish(topics_.events, payload);
     log_.info("[EVENT] " + name + ": " + description);
 }
 
 void TelemetryService::publishRelayState(const std::string& deviceId) {
-    if (!connectivity_.transport().isConnected()) return;
-
     const auto* relay = relays_.getState(deviceId);
     if (!relay) return;
 
@@ -65,6 +66,10 @@ void TelemetryService::publishTelemetry() {
     metrics.wifiConnected = connectivity_.network().isConnected();
     metrics.mqttConnected = connectivity_.transport().isConnected();
     metrics.rssi = connectivity_.activeRssi();
+    metrics.queuedMessages = static_cast<uint16_t>(connectivity_.transport().queuedCount());
+    if (gpsProvider_) {
+        metrics.modemRecoveries = gpsProvider_->modemRecoveries();
+    }
 
     std::string timestamp = timeProvider_.isoTimestamp();
     std::string payload = serializer_.formatTelemetry(id, metrics, relays_.getAllStates(), timestamp);
